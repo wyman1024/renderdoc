@@ -201,6 +201,13 @@ CaptureDialog::CaptureDialog(ICaptureContext &ctx, OnCaptureMethod captureCallba
   QObject::connect(ui->vulkanLayerWarn, &RDLabel::clicked, this,
                    &CaptureDialog::vulkanLayerWarn_mouseClick);
 
+  // Connect LogOnlyMode toggle to enable/disable LogOutputPath
+  QObject::connect(ui->LogOnlyMode, &QCheckBox::toggled, this,
+                   [this](bool checked) {
+                     ui->LogOutputPath->setEnabled(checked);
+                     ui->LogOutputPathLabel->setEnabled(checked);
+                   });
+
   // Set up scanning for Android apps
   initWarning(ui->androidScan);
 
@@ -930,6 +937,10 @@ void CaptureDialog::SetSettings(CaptureSettings settings)
   ui->VerifyBufferAccess->setChecked(settings.options.verifyBufferAccess);
   ui->AutoStart->setChecked(settings.autoStart);
   ui->SoftMemoryLimit->setValue(settings.options.softMemoryLimit);
+  ui->LogOnlyMode->setChecked(settings.options.logOnlyMode);
+  ui->LogOutputPath->setText(ToQStr(settings.options.logOutputPath));
+  ui->LogOutputPath->setEnabled(settings.options.logOnlyMode);
+  ui->LogOutputPathLabel->setEnabled(settings.options.logOnlyMode);
 
   // force flush this state
   on_CaptureCallstacks_toggled(ui->CaptureCallstacks->isChecked());
@@ -978,6 +989,8 @@ CaptureSettings CaptureDialog::Settings()
   ret.options.delayForDebugger = (uint32_t)ui->DelayForDebugger->value();
   ret.options.verifyBufferAccess = ui->VerifyBufferAccess->isChecked();
   ret.options.softMemoryLimit = (uint32_t)ui->SoftMemoryLimit->value();
+  ret.options.logOnlyMode = ui->LogOnlyMode->isChecked();
+  ret.options.logOutputPath = ui->LogOutputPath->text();
 
   if(ui->queueFrameCap->isChecked())
   {

@@ -610,6 +610,81 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="LogOnlyMode">
+        <property name="toolTip">
+         <string>Enable log-only mode. In this mode, hooks will only log function calls without creating wrapper objects or performing any capture operations. This ensures complete transparency to the application.</string>
+        </property>
+        <property name="text">
+         <string>Log Only Mode</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="LogOutputPathFrame">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::NoFrame</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Plain</enum>
+        </property>
+        <layout class="QHBoxLayout" name="LogOutputPathLayout">
+         <property name="spacing">
+          <number>4</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="RDLineEdit" name="LogOutputPath">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="toolTip">
+            <string>Path to output log file when log-only mode is enabled. Leave empty for console output.</string>
+           </property>
+           <property name="placeholderText">
+            <string>Log file path (empty = console)</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="LogOutputPathLabel">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="toolTip">
+            <string>Path to output log file when log-only mode is enabled. Leave empty for console output.</string>
+           </property>
+           <property name="text">
+            <string>Log Path</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="AutoStart">
         <property name="toolTip">
          <string>If these capture settings are saved &amp; run, auto start the capture instantly on load</string>

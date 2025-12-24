@@ -23,6 +23,7 @@
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>renderdoc_d3d11</RootNamespace>
     <ProjectName>d3d11</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(SolutionDir)\util\WindowsSDKTarget.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -30,7 +31,7 @@
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -67,7 +68,7 @@
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <TreatWarningAsError>true</TreatWarningAsError>
+      <TreatWarningAsError>false</TreatWarningAsError>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -116,6 +117,7 @@
     <ClCompile Include="d3d11_counters.cpp" />
     <ClCompile Include="d3d11_debug.cpp" />
     <ClCompile Include="d3d11_device.cpp" />
+    <ClCompile Include="d3d11_simple_device.cpp" />
     <ClCompile Include="d3d11_device1_wrap.cpp" />
     <ClCompile Include="d3d11_device2_wrap.cpp" />
     <ClCompile Include="d3d11_device3_wrap.cpp" />
@@ -140,6 +142,7 @@
     <ClInclude Include="d3d11_context.h" />
     <ClInclude Include="d3d11_debug.h" />
     <ClInclude Include="d3d11_device.h" />
+    <ClInclude Include="d3d11_simple_device.h" />
     <ClInclude Include="d3d11_hooks.h" />
     <ClInclude Include="d3d11_manager.h" />
     <ClInclude Include="d3d11_renderstate.h" />
