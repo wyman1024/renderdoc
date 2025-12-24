@@ -889,6 +889,9 @@ private:
                                                D3D_FEATURE_LEVEL MinimumFeatureLevel, REFIID riid,
                                                void **ppDevice)
   {
+    RDCLOG("[HOOK_DIAG] D3D12CreateDevice_hook called! FeatureLevel=0x%x, riid=%s", 
+           MinimumFeatureLevel, ToStr(riid).c_str());
+
     PFN_D3D12_CREATE_DEVICE createFunc = d3d12hooks.CreateDevice();
 
     if(!createFunc)
@@ -901,12 +904,17 @@ private:
       if(!createFunc)
       {
         RDCERR("Something went seriously wrong, d3d12.dll couldn't be loaded!");
+        RDCLOG("[HOOK_DIAG] FAILED: d3d12.dll not loaded or D3D12CreateDevice not found!");
         return E_UNEXPECTED;
       }
     }
 
-    return d3d12hooks.Create_Internal(createFunc, NULL, pAdapter, MinimumFeatureLevel, riid,
-                                      ppDevice);
+    RDCLOG("[HOOK_DIAG] Calling Create_Internal to wrap D3D12 device...");
+    HRESULT hr = d3d12hooks.Create_Internal(createFunc, NULL, pAdapter, MinimumFeatureLevel, riid,
+                                            ppDevice);
+    RDCLOG("[HOOK_DIAG] D3D12CreateDevice result: %s, device=0x%p", ToStr(hr).c_str(), 
+           ppDevice ? *ppDevice : NULL);
+    return hr;
   }
 
   static HRESULT WINAPI D3D12EnableExperimentalFeatures_hook(UINT NumFeatures, const IID *pIIDs,

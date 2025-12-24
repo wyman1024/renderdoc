@@ -228,6 +228,15 @@ typedef enum RENDERDOC_CaptureOption
   //
   // Default - 0 Megabytes
   eRENDERDOC_Option_SoftMemoryLimit = 13,
+
+  // Enable log-only mode for hooking. In this mode, hooks will only log function calls
+  // without creating wrapper objects or performing any capture operations.
+  //
+  // Default - disabled
+  //
+  // 1 - Only log function calls, do not wrap or capture anything
+  // 0 - Normal capture mode with full wrapping and capture functionality
+  eRENDERDOC_Option_LogOnlyMode = 14,
 } RENDERDOC_CaptureOption;
 
 // Sets an option that controls how RenderDoc behaves on capture.

@@ -23,7 +23,8 @@
     <ProjectGuid>{E2B46D67-90E2-40B6-9597-72930E7845E5}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>renderdoc</RootNamespace>
-    <ProjectName>renderdoc</ProjectName>
+    <ProjectName>rendercap</ProjectName>
+    <WindowsTargetPlatformVersion>$(RenderDocLatestWin10SDKVersion)</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(SolutionDir)\util\WindowsSDKTarget.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -31,7 +32,7 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
     <LinkIncremental>false</LinkIncremental>
@@ -47,6 +48,9 @@
   </PropertyGroup>
   <PropertyGroup>
     <IntDir>$(SolutionDir)$(Platform)\$(Configuration)\obj\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Development|x64'">
+    <TargetName>rendercap</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <ClCompile>
@@ -197,6 +201,7 @@
     <ClInclude Include="common\dds_readwrite.h" />
     <ClInclude Include="common\formatting.h" />
     <ClInclude Include="common\globalconfig.h" />
+    <ClInclude Include="common\hook_logger.h" />
     <ClInclude Include="common\result.h" />
     <ClInclude Include="common\shader_cache.h" />
     <ClInclude Include="common\tex_data.h" />
@@ -533,6 +538,7 @@
     <ClCompile Include="android\jdwp_util.cpp" />
     <ClCompile Include="common\common.cpp" />
     <ClCompile Include="common\dds_readwrite.cpp" />
+    <ClCompile Include="common\hook_logger.cpp" />
     <ClCompile Include="common\jobsystem.cpp" />
     <ClCompile Include="common\jobsystem_tests.cpp" />
     <ClCompile Include="common\threading_tests.cpp" />

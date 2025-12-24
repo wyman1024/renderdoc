@@ -33,29 +33,65 @@
 #include <set>
 #include "common/common.h"
 #include "common/threading.h"
+#include "core/settings.h"
 #include "hooks/hooks.h"
 #include "os/os_specific.h"
 #include "strings/string_utils.h"
 
 #define VERBOSE_DEBUG_HOOK OPTION_OFF
 
+// Hook diagnostic configuration
+RDOC_DEBUG_CONFIG(uint32_t, Win32_Hook_DiagnosticLevel, 0,
+                  "Enable hook diagnostic logging. 0=Off, 1=Basic, 2=Detailed, 3=Verbose");
+
+// Hook diagnostic logging macros
+#define HOOK_DIAG_ENABLED() (Win32_Hook_DiagnosticLevel() > 0)
+#define HOOK_DIAG_BASIC(...)                       \
+  do                                               \
+  {                                                \
+    if(Win32_Hook_DiagnosticLevel() >= 1)          \
+      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
+  } while(0)
+#define HOOK_DIAG_DETAILED(...)                    \
+  do                                               \
+  {                                                \
+    if(Win32_Hook_DiagnosticLevel() >= 2)          \
+      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
+  } while(0)
+#define HOOK_DIAG_VERBOSE(...)                     \
+  do                                               \
+  {                                                \
+    if(Win32_Hook_DiagnosticLevel() >= 3)          \
+      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
+  } while(0)
+
 // map from address of IAT entry, to original contents
 std::map<void **, void *> s_InstalledHooks;
 Threading::CriticalSection installedLock;
 
-bool ApplyHook(FunctionHook &hook, void **IATentry, bool &already)
+// Forward declarations
+static void DiagnoseGraphicsAPIHookStatus();
+static void ApplyExportTableHooks();
+
+void Win32_ManualHookModule(rdcstr modName, HMODULE module);
+
+  bool ApplyHook(FunctionHook &hook, void **IATentry, bool &already)
 {
   DWORD oldProtection = PAGE_EXECUTE;
 
   if(*IATentry == hook.hook)
   {
     already = true;
+    HOOK_DIAG_VERBOSE("  IAT entry for %s already hooked at 0x%p", hook.function.c_str(), IATentry);
     return true;
   }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
   RDCDEBUG("Patching IAT for %s: %p to %p", hook.function.c_str(), IATentry, hook.hook);
 #endif
+
+  HOOK_DIAG_DETAILED("  Patching IAT for %s: entry=0x%p, original=0x%p -> hook=0x%p",
+                     hook.function.c_str(), IATentry, *IATentry, hook.hook);
 
   {
     SCOPED_LOCK(installedLock);
@@ -67,6 +103,7 @@ bool ApplyHook(FunctionHook &hook, void **IATentry, bool &already)
   if(!success)
   {
     RDCERR("Failed to make IAT entry writeable 0x%p", IATentry);
+    HOOK_DIAG_BASIC("  FAILED to make IAT entry writeable for %s at 0x%p", hook.function.c_str(), IATentry);
     return false;
   }
 
@@ -76,9 +113,11 @@ bool ApplyHook(FunctionHook &hook, void **IATentry, bool &already)
   if(!success)
   {
     RDCERR("Failed to restore IAT entry protection 0x%p", IATentry);
+    HOOK_DIAG_BASIC("  FAILED to restore IAT entry protection for %s at 0x%p", hook.function.c_str(), IATentry);
     return false;
   }
 
+  HOOK_DIAG_DETAILED("  Successfully patched IAT for %s", hook.function.c_str());
   return true;
 }
 
@@ -172,6 +211,41 @@ struct CachedHookData
         i++;
       }
       lowername[i] = 0;
+    }
+
+    // Diagnostic logging for game executable and D3D12/DXGI modules
+    if(strstr(lowername, ".exe") || strstr(lowername, "d3d12") || strstr(lowername, "dxgi"))
+    {
+      RDCLOG("[IAT_HOOK] Scanning module: %s (handle=0x%p)", modName, module);
+    }
+    
+    // Apply EAT hooks when D3D12 or D3D11 DLL is detected
+    static bool s_d3d12_eat_hooked = false;
+    static bool s_d3d11_eat_hooked = false;
+    
+    if(!s_d3d12_eat_hooked && strstr(lowername, "d3d12.dll"))
+    {
+      s_d3d12_eat_hooked = true;
+      RDCLOG("[EAT_HOOK] d3d12.dll detected in ApplyHooks, applying EAT hooks now");
+      ApplyExportTableHooks();
+    }
+    else if(!s_d3d11_eat_hooked && strstr(lowername, "d3d11.dll"))
+    {
+      s_d3d11_eat_hooked = true;
+      RDCLOG("[EAT_HOOK] d3d11.dll detected in ApplyHooks, applying EAT hooks now");
+      ApplyExportTableHooks();
+    }
+    else if(strstr(lowername, "dxgi.dll"))
+    {
+      RDCLOG("[HOOK_DIAG] dxgi.dll detected in ApplyHooks, checking if EAT hooks need to be applied");
+      // Check if d3d11.dll is already loaded but EAT hooks haven't been applied yet
+      HMODULE d3d11 = GetModuleHandleA("d3d11.dll");
+      if(d3d11 && !s_d3d11_eat_hooked)
+      {
+        RDCLOG("[HOOK_DIAG] d3d11.dll was already loaded before hook installation, applying EAT hooks now");
+        s_d3d11_eat_hooked = true;
+        ApplyExportTableHooks();
+      }
     }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
@@ -275,10 +349,18 @@ struct CachedHookData
        strstr(lowername, "nv-vk") == lowername || strstr(lowername, "amdvlk") == lowername ||
        strstr(lowername, "igvk") == lowername || strstr(lowername, "nvopencl") == lowername ||
        strstr(lowername, "nvapi") == lowername)
+    {
+      HOOK_DIAG_VERBOSE("Skipping ignored module: %s", modName);
       return;
+    }
 
     if(ignores.find(lowername) != ignores.end())
+    {
+      HOOK_DIAG_VERBOSE("Skipping explicitly ignored module: %s", modName);
       return;
+    }
+
+    HOOK_DIAG_VERBOSE("Processing module: %s (0x%p)", modName, module);
 
     // the module could have been unloaded after our toolhelp snapshot, especially if we spent a
     // long time
@@ -286,7 +368,10 @@ struct CachedHookData
     wchar_t modpath[1024] = {0};
     GetModuleFileNameW(module, modpath, 1023);
     if(modpath[0] == 0)
+    {
+      HOOK_DIAG_VERBOSE("Module %s unloaded during processing", modName);
       return;
+    }
 
     // windows 11 and newer versions have weird hotpatch DLLs that don't act like real DLLs. The
     // LoadLibraryW below will fail for these DLLs even when using the module path provided.
@@ -349,11 +434,18 @@ struct CachedHookData
       RDCDEBUG("found IAT for %s", dllName);
 #endif
 
+      HOOK_DIAG_VERBOSE("  Found IAT for %s in module %s", dllName, modName);
+
       DllHookset *hookset = NULL;
 
       for(auto it = DllHooks.begin(); it != DllHooks.end(); ++it)
         if(!_stricmp(it->first.c_str(), dllName))
           hookset = &it->second;
+
+      if(hookset)
+      {
+        HOOK_DIAG_DETAILED("  Module %s imports from %s (we have hooks for this)", modName, dllName);
+      }
 
       if(hookset && importDesc->OriginalFirstThunk > 0)
       {
@@ -471,17 +563,35 @@ struct CachedHookData
           RDCDEBUG("Found normal import %s", importName);
 #endif
 
+          // Diagnostic logging for D3D12 imports
+          if(strstr(importName, "D3D12") || strstr(importName, "DXGI"))
+          {
+            RDCLOG("[IAT_HOOK] Found import: %s from %s in module %s", importName, dllName, modName);
+          }
+
           auto found = std::lower_bound(hookset->FunctionHooks.begin(),
                                         hookset->FunctionHooks.end(), importName, hook_find());
 
           if(found != hookset->FunctionHooks.end() &&
              !strcmp(found->function.c_str(), importName) && ownmodule != module)
           {
+            // Diagnostic logging for D3D12 hook application
+            if(strstr(importName, "D3D12") || strstr(importName, "DXGI"))
+            {
+              RDCLOG("[IAT_HOOK] Attempting to hook: %s", importName);
+            }
+            
             bool already = false;
             bool applied;
             {
               SCOPED_LOCK(lock);
               applied = ApplyHook(*found, IATentry, already);
+            }
+            
+            // Diagnostic logging for hook result
+            if(strstr(importName, "D3D12") || strstr(importName, "DXGI"))
+            {
+              RDCLOG("[IAT_HOOK] Hook result for %s: applied=%d, already=%d", importName, applied, already);
             }
 
             // if we failed, or if it's already set and we're not doing a missedOrdinals
@@ -586,8 +696,12 @@ static void HookAllModules()
   if(!s_HookData->hookAll)
     return;
 
+  HOOK_DIAG_DETAILED("=== Scanning all loaded modules for hooking ===");
+
   ForAllModules(
       [](const MODULEENTRY32 &me32) { s_HookData->ApplyHooks(me32.szModule, me32.hModule); });
+
+  HOOK_DIAG_DETAILED("=== Module scanning complete ===");
 
   // check if we're already in this section of code, and if so don't go in again.
   int32_t prev = Atomic::CmpExch32(&s_HookData->posthooking, 0, 1);
@@ -680,10 +794,27 @@ HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE fileHandle, DW
   RDCDEBUG("LoadLibraryA(%s)", lpLibFileName);
 #endif
 
+  HOOK_DIAG_BASIC("LoadLibraryExA(\"%s\", flags=0x%x) -> 0x%p, will%s re-hook", 
+                  lpLibFileName ? lpLibFileName : "(null)", flags, mod, dohook ? "" : " NOT");
+
   DWORD err = GetLastError();
 
   if(dohook && mod && !IsAPISet(lpLibFileName))
+  {
+    HOOK_DIAG_DETAILED("Re-scanning modules after loading %s", lpLibFileName);
     HookAllModules();
+    
+    // If this is d3d12.dll, d3d11.dll, or dxgi.dll, apply EAT hooks immediately
+    if(lpLibFileName)
+    {
+      rdcstr libName = strlower(rdcstr(lpLibFileName));
+      if(libName.contains("d3d12.dll") || libName.contains("d3d11.dll") || libName.contains("dxgi.dll"))
+      {
+        RDCLOG("[EAT_HOOK] Graphics DLL loaded dynamically: %s, applying EAT hooks", lpLibFileName);
+        ApplyExportTableHooks();
+      }
+    }
+  }
 
   SetLastError(err);
 
@@ -732,14 +863,34 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE fileHandle, D
   RDCDEBUG("LoadLibraryW(%ls)", lpLibFileName);
 #endif
 
+  rdcstr utf8Name = StringFormat::Wide2UTF8(lpLibFileName);
+  HOOK_DIAG_BASIC("LoadLibraryExW(\"%s\", flags=0x%x) -> will%s re-hook", 
+                  utf8Name.c_str(), flags, dohook ? "" : " NOT");
+
   // we can use the function naked, as when setting up the hook for LoadLibraryExA, our own module
   // was excluded from IAT patching
   HMODULE mod = LoadLibraryExW(lpLibFileName, fileHandle, flags);
 
+  if(mod)
+  {
+    HOOK_DIAG_BASIC("  Loaded %s at 0x%p", utf8Name.c_str(), mod);
+  }
+
   DWORD err = GetLastError();
 
   if(dohook && mod && !IsAPISet(lpLibFileName))
+  {
+    HOOK_DIAG_DETAILED("Re-scanning modules after loading %s", utf8Name.c_str());
     HookAllModules();
+    
+    // Apply EAT hooks if this is a D3D or DXGI DLL
+    rdcstr libName = strlower(utf8Name);
+    if(libName.contains("d3d12.dll") || libName.contains("d3d11.dll") || libName.contains("dxgi.dll"))
+    {
+      RDCLOG("[EAT_HOOK] Applying EAT hooks to newly loaded module: %s", utf8Name.c_str());
+      ApplyExportTableHooks();
+    }
+  }
 
   SetLastError(err);
 
@@ -763,8 +914,39 @@ static bool OrdinalAsString(void *func)
 
 FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
 {
+  // Early diagnostic - log EVERY GetProcAddress call to d3d12.dll
+  static bool s_logged_entry = false;
+  if(!s_logged_entry)
+  {
+    s_logged_entry = true;
+    RDCLOG("=== Hooked_GetProcAddress is ACTIVE ===");
+  }
+
   if(mod == NULL || func == NULL || mod == s_HookData->ownmodule)
     return GetProcAddress(mod, func);
+
+  // Diagnostic logging for D3D12/DXGI function queries
+  if(!OrdinalAsString((void *)func))
+  {
+    const char *funcName = (const char *)func;
+    
+    // Check if this is d3d12.dll
+    char modName[MAX_PATH] = {0};
+    GetModuleFileNameA(mod, modName, MAX_PATH);
+    
+    // Convert to lowercase for comparison
+    for(int i = 0; modName[i]; i++)
+      modName[i] = (char)tolower(modName[i]);
+    
+    bool isD3D12 = strstr(modName, "d3d12.dll") != NULL;
+    bool isDXGI = strstr(modName, "dxgi.dll") != NULL;
+    
+    if(isD3D12 || isDXGI || 
+       strstr(funcName, "D3D12") || strstr(funcName, "DXGI") || strstr(funcName, "CreateDevice"))
+    {
+      RDCLOG("[GetProcAddress] Query: module=%s, function=%s", modName, funcName);
+    }
+  }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
   if(OrdinalAsString((void *)func))
@@ -849,6 +1031,17 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
       if(found != it->second.FunctionHooks.end() && !(search < *found))
       {
         FARPROC realfunc = GetProcAddress(mod, func);
+
+        // Diagnostic logging for D3D12/DXGI hooked functions
+        if(!OrdinalAsString((void *)func))
+        {
+          const char *funcName = (const char *)func;
+          if(strstr(funcName, "D3D12") || strstr(funcName, "DXGI") || strstr(funcName, "CreateDevice"))
+          {
+            RDCLOG("[GetProcAddress] ✓ Returning HOOKED function: %s (hook=0x%p, real=0x%p)", 
+                   funcName, found->hook, realfunc);
+          }
+        }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
         RDCDEBUG("Found hooked function, returning hook pointer %p", found->hook);
@@ -946,6 +1139,12 @@ void LibraryHooks::IgnoreLibrary(const char *libraryName)
 void LibraryHooks::BeginHookRegistration()
 {
   InitHookData();
+  
+  if(HOOK_DIAG_ENABLED())
+  {
+    HOOK_DIAG_BASIC("=== Beginning Hook Registration ===");
+    HOOK_DIAG_BASIC("Diagnostic Level: %u", Win32_Hook_DiagnosticLevel());
+  }
 }
 
 // hook all functions for currently loaded modules.
@@ -959,6 +1158,23 @@ void LibraryHooks::EndHookRegistration()
   RDCDEBUG("Applying hooks");
 #endif
 
+  if(HOOK_DIAG_ENABLED())
+  {
+    HOOK_DIAG_BASIC("=== Hook Registration Complete ===");
+    HOOK_DIAG_BASIC("Registered hooks for %zu DLLs:", s_HookData->DllHooks.size());
+    for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
+    {
+      HOOK_DIAG_BASIC("  %s: %zu functions", it->first.c_str(), it->second.FunctionHooks.size());
+      if(Win32_Hook_DiagnosticLevel() >= 2)
+      {
+        for(const FunctionHook &hook : it->second.FunctionHooks)
+        {
+          HOOK_DIAG_DETAILED("    - %s", hook.function.c_str());
+        }
+      }
+    }
+  }
+
   HookAllModules();
 
   if(s_HookData->missedOrdinals)
@@ -967,12 +1183,21 @@ void LibraryHooks::EndHookRegistration()
     RDCDEBUG("Missed ordinals - applying hooks again");
 #endif
 
+    HOOK_DIAG_DETAILED("Missed ordinals detected, applying hooks again");
+
     // we need to do a second pass now that we know ordinal names to finally hook
     // some imports by ordinal only.
     HookAllModules();
 
     s_HookData->missedOrdinals = false;
   }
+
+  // Apply Export Address Table hooks for D3D11/D3D12
+  // This catches calls that bypass IAT (e.g., direct GetProcAddress before our hooks are active)
+  ApplyExportTableHooks();
+
+  // Run diagnostic after initial hook setup
+  DiagnoseGraphicsAPIHookStatus();
 }
 
 void LibraryHooks::Refresh()
@@ -1020,6 +1245,655 @@ bool LibraryHooks::Detect(const char *identifier)
       ret = true;
   });
   return ret;
+}
+
+// Export Address Table (EAT) Hook support
+// This hooks the DLL's export table directly, catching calls that bypass IAT
+static std::map<void *, void *> s_EATHooks;    // original -> hook
+static std::map<void *, void *> s_EATOriginals; // hook -> original
+static std::map<void *, void *> s_Trampolines;  // original -> trampoline
+static volatile bool s_EATHookInProgress = false;  // Prevent re-hooking during function execution
+
+// Helper function to get trampoline address for a hooked function
+// This is used by hook functions to call the original implementation
+void *GetTrampolineForHookedFunction(void *hookedAddress)
+{
+  RDCLOG("[EAT_HOOK] GetTrampolineForHookedFunction called with address 0x%p", hookedAddress);
+  
+  // First check if hookedAddress is already a trampoline
+  for(auto &pair : s_Trampolines)
+  {
+    void *trampolineAddr = pair.second;
+    if(trampolineAddr == hookedAddress)
+    {
+      RDCLOG("[EAT_HOOK]   ✓ Address is already a trampoline, returning as-is");
+      return hookedAddress;
+    }
+  }
+  
+  // Try to find trampoline by checking if hookedAddress points to a hooked function
+  // The hookedAddress might be the original address (now containing JMP) or cached pointer
+  for(auto &pair : s_Trampolines)
+  {
+    void *originalAddr = pair.first;
+    void *trampolineAddr = pair.second;
+    
+    RDCLOG("[EAT_HOOK]   Checking: original=0x%p, trampoline=0x%p", originalAddr, trampolineAddr);
+    
+    // Check if hookedAddress matches the original address
+    if(originalAddr == hookedAddress)
+    {
+      RDCLOG("[EAT_HOOK]   ✓ Found trampoline by original address: 0x%p", trampolineAddr);
+      return trampolineAddr;
+    }
+  }
+  
+  RDCLOG("[EAT_HOOK]   ✗ No trampoline found, returning original address");
+  // Not found - return the address as-is (might not be hooked by EAT)
+  return hookedAddress;
+}
+
+// Simple x64 instruction length decoder to find instruction boundaries
+// This ensures we don't truncate instructions when copying to trampoline
+// This is a simplified decoder focusing on common function prologue instructions
+static size_t GetX64InstructionLength(const BYTE *code, size_t maxBytes)
+{
+  if(!code || maxBytes == 0)
+    return 0;
+  
+  size_t offset = 0;
+  bool hasREX = false;
+  
+  // Skip instruction prefixes (can be up to 4 prefixes)
+  int prefixCount = 0;
+  while(offset < maxBytes && prefixCount < 4)
+  {
+    BYTE b = code[offset];
+    // Check for prefix bytes
+    if(b == 0x66 || b == 0x67 || b == 0xF0 || b == 0xF2 || b == 0xF3 ||
+       b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 || b == 0x64 || b == 0x65)
+    {
+      offset++;
+      prefixCount++;
+      continue;
+    }
+    // Check for REX prefix (0x40-0x4F)
+    if((b & 0xF0) == 0x40)
+    {
+      hasREX = true;
+      offset++;
+      continue;
+    }
+    break;
+  }
+  
+  if(offset >= maxBytes)
+    return maxBytes;
+  
+  BYTE opcode = code[offset];
+  size_t opcodeStart = offset;
+  offset++;
+  
+  // Handle two-byte opcodes (0x0F prefix)
+  bool isTwoByteOpcode = false;
+  if(opcode == 0x0F)
+  {
+    if(offset >= maxBytes)
+      return maxBytes;
+    isTwoByteOpcode = true;
+    opcode = code[offset];
+    offset++;
+    
+    // Handle three-byte opcodes (0x0F 0x38/0x3A)
+    if(opcode == 0x38 || opcode == 0x3A)
+    {
+      if(offset >= maxBytes)
+        return maxBytes;
+      opcode = code[offset];
+      offset++;
+    }
+  }
+  
+  // Handle common single-byte opcodes without ModR/M
+  if(!isTwoByteOpcode)
+  {
+    // PUSH reg (0x50-0x57), POP reg (0x58-0x5F)
+    if((opcode >= 0x50 && opcode <= 0x5F))
+    {
+      return offset;
+    }
+    // RET (0xC3), RET imm16 (0xC2)
+    if(opcode == 0xC3)
+    {
+      return offset;
+    }
+    if(opcode == 0xC2)
+    {
+      if(offset + 2 > maxBytes)
+        return maxBytes;
+      return offset + 2;  // RET imm16
+    }
+    // NOP (0x90)
+    if(opcode == 0x90)
+    {
+      return offset;
+    }
+    // INT3 (0xCC)
+    if(opcode == 0xCC)
+    {
+      return offset;
+    }
+    // PUSH imm32 (0x68)
+    if(opcode == 0x68)
+    {
+      if(offset + 4 > maxBytes)
+        return maxBytes;
+      return offset + 4;
+    }
+    // PUSH imm8 (0x6A)
+    if(opcode == 0x6A)
+    {
+      if(offset + 1 > maxBytes)
+        return maxBytes;
+      return offset + 1;
+    }
+    // CALL rel32 (0xE8), JMP rel32 (0xE9)
+    if(opcode == 0xE8 || opcode == 0xE9)
+    {
+      if(offset + 4 > maxBytes)
+        return maxBytes;
+      return offset + 4;
+    }
+    // JMP rel8 (0xEB)
+    if(opcode == 0xEB)
+    {
+      if(offset + 1 > maxBytes)
+        return maxBytes;
+      return offset + 1;
+    }
+    // MOV reg, imm64 (0x48 0xB8+reg) - special case for x64
+    if(hasREX && (opcode & 0xF8) == 0xB8)
+    {
+      if(offset + 8 > maxBytes)
+        return maxBytes;
+      return offset + 8;
+    }
+  }
+  
+  // Instructions with ModR/M byte
+  if(offset >= maxBytes)
+    return maxBytes;
+  
+  BYTE modRM = code[offset];
+  offset++;
+  
+  BYTE mod = (modRM >> 6) & 0x03;
+  BYTE rm = modRM & 0x07;
+  
+  // Check for SIB byte
+  if(mod != 3 && rm == 4)
+  {
+    if(offset >= maxBytes)
+      return maxBytes;
+    offset++;  // Skip SIB byte
+  }
+  
+  // Determine displacement size
+  int displacementSize = 0;
+  if(mod == 0 && rm == 5)
+  {
+    displacementSize = 4;  // [RIP+disp32] or [disp32]
+  }
+  else if(mod == 1)
+  {
+    displacementSize = 1;  // [reg+disp8]
+  }
+  else if(mod == 2)
+  {
+    displacementSize = 4;  // [reg+disp32]
+  }
+  
+  // Determine immediate size based on opcode
+  int immediateSize = 0;
+  if(!isTwoByteOpcode)
+  {
+    BYTE baseOpcode = code[opcodeStart];
+    if(baseOpcode == 0x83 || baseOpcode == 0xC6 || baseOpcode == 0x80)
+    {
+      immediateSize = 1;  // ADD/SUB/... reg, imm8
+    }
+    else if(baseOpcode == 0x81 || baseOpcode == 0xC7)
+    {
+      immediateSize = 4;  // ADD/SUB/... reg, imm32
+    }
+    else if((baseOpcode & 0xF0) == 0xB0 && !hasREX)
+    {
+      immediateSize = 1;  // MOV reg8, imm8
+    }
+    else if((baseOpcode & 0xF8) == 0xB8 && !hasREX)
+    {
+      immediateSize = 4;  // MOV reg32, imm32
+    }
+  }
+  else
+  {
+    // Two-byte opcodes - most don't have immediate, but some do
+    // For safety, we'll handle common cases
+    if(opcode == 0xAE || opcode == 0xAF)  // Some SSE/AVX instructions
+    {
+      // These might have immediate, but for function prologues, unlikely
+      immediateSize = 0;
+    }
+  }
+  
+  offset += displacementSize + immediateSize;
+  
+  return (offset > maxBytes) ? maxBytes : offset;
+}
+
+// Check if a function is already hooked (detects common hook patterns)
+// Returns true if function appears to be already hooked
+static bool IsFunctionAlreadyHooked(const BYTE *funcBytes)
+{
+  // Check for common hook patterns:
+  // 1. JMP [RIP+0] pattern: 0xFF 0x25 0x00 0x00 0x00 0x00 (x64 long jump)
+  if(funcBytes[0] == 0xFF && funcBytes[1] == 0x25)
+  {
+    DWORD offset = *(DWORD *)(funcBytes + 2);
+    // Check if it's a RIP-relative jump (offset is usually 0 or small)
+    if(offset == 0 || offset < 0x1000)
+    {
+      return true;
+    }
+  }
+  
+  // 2. Short JMP: 0xE9 (JMP rel32) - less common on x64 but possible
+  if(funcBytes[0] == 0xE9)
+  {
+    return true;
+  }
+  
+  // 3. JMP rel8: 0xEB - very short jump, less likely but possible
+  if(funcBytes[0] == 0xEB)
+  {
+    return true;
+  }
+  
+  return false;
+}
+
+// Calculate safe bytes to copy ensuring we don't truncate instructions
+// Returns the number of bytes to copy (at least minBytes, aligned to instruction boundaries)
+static size_t CalculateSafeCopySize(const BYTE *funcBytes, size_t minBytes, size_t maxBytes)
+{
+  size_t totalBytes = 0;
+  size_t bytesRemaining = maxBytes;
+  
+  // Keep decoding instructions until we have at least minBytes
+  while(totalBytes < minBytes && bytesRemaining > 0)
+  {
+    size_t instLen = GetX64InstructionLength(funcBytes + totalBytes, bytesRemaining);
+    if(instLen == 0)
+    {
+      // Failed to decode, fall back to minBytes
+      RDCLOG("[EAT_HOOK] Warning: Failed to decode instruction at offset %zu, using minimum size", totalBytes);
+      return minBytes;
+    }
+    
+    totalBytes += instLen;
+    bytesRemaining -= instLen;
+    
+    // Safety limit: don't copy more than 32 bytes
+    if(totalBytes >= 32)
+      break;
+  }
+  
+  return totalBytes;
+}
+
+static bool HookExportFunction(HMODULE module, const char *functionName, void *hookFunc, void **outOriginal)
+{
+  if(!module || !functionName || !hookFunc)
+    return false;
+
+  // Get DOS header
+  IMAGE_DOS_HEADER *dosHeader = (IMAGE_DOS_HEADER *)module;
+  if(dosHeader->e_magic != IMAGE_DOS_SIGNATURE)
+    return false;
+
+  // Get NT headers
+  IMAGE_NT_HEADERS *ntHeaders = (IMAGE_NT_HEADERS *)((BYTE *)module + dosHeader->e_lfanew);
+  if(ntHeaders->Signature != IMAGE_NT_SIGNATURE)
+    return false;
+
+  // Get export directory
+  IMAGE_DATA_DIRECTORY *exportDir = &ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+  if(exportDir->VirtualAddress == 0)
+    return false;
+
+  IMAGE_EXPORT_DIRECTORY *exports = (IMAGE_EXPORT_DIRECTORY *)((BYTE *)module + exportDir->VirtualAddress);
+  
+  DWORD *nameRVAs = (DWORD *)((BYTE *)module + exports->AddressOfNames);
+  DWORD *funcRVAs = (DWORD *)((BYTE *)module + exports->AddressOfFunctions);
+  WORD *ordinals = (WORD *)((BYTE *)module + exports->AddressOfNameOrdinals);
+
+  // Find the function
+  for(DWORD i = 0; i < exports->NumberOfNames; i++)
+  {
+    const char *name = (const char *)((BYTE *)module + nameRVAs[i]);
+    if(strcmp(name, functionName) == 0)
+    {
+      // Found it!
+      WORD ordinal = ordinals[i];
+      void *originalFunc = (void *)((BYTE *)module + funcRVAs[ordinal]);
+      
+      // Check if already hooked
+      if(s_Trampolines.find(originalFunc) != s_Trampolines.end())
+      {
+        RDCLOG("[EAT_HOOK] Function %s already hooked (original=0x%p, trampoline=0x%p), skipping re-hook", 
+               functionName, originalFunc, s_Trampolines[originalFunc]);
+        if(outOriginal)
+          *outOriginal = s_Trampolines[originalFunc];
+        return true;
+      }
+      
+      RDCLOG("[EAT_HOOK] Hooking function %s at address 0x%p", functionName, originalFunc);
+
+      BYTE *funcBytes = (BYTE *)originalFunc;
+      
+      // Check if function is already hooked (by another hooking library)
+      if(IsFunctionAlreadyHooked(funcBytes))
+      {
+        RDCLOG("[EAT_HOOK] Warning: Function %s at 0x%p appears to be already hooked, proceeding anyway", 
+               functionName, originalFunc);
+      }
+
+      // Allocate memory for trampoline (original bytes + JMP back)
+      // We copy more bytes to be safe (32 bytes + 14 for JMP = 46 bytes, round to 64)
+      void *trampoline = VirtualAlloc(NULL, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+      if(!trampoline)
+      {
+        RDCERR("Failed to allocate trampoline for %s", functionName);
+        return false;
+      }
+
+      BYTE *trampolineBytes = (BYTE *)trampoline;
+
+      // We need to copy at least 14 bytes (size of JMP instruction), but we must ensure
+      // we don't break any instructions. Use instruction boundary analysis to calculate
+      // safe copy size that aligns to complete instruction boundaries.
+      const size_t minBytes = 14;  // Minimum bytes needed for JMP instruction (0xFF 0x25 [32-bit offset] [64-bit target])
+      const size_t maxBytes = 32;  // Safety limit: don't copy more than 32 bytes
+      size_t bytesToCopy = CalculateSafeCopySize(funcBytes, minBytes, maxBytes);
+      memcpy(trampolineBytes, funcBytes, bytesToCopy);
+      
+      // Log the first bytes of original function for debugging
+      rdcstr byteStr;
+      const size_t logBytes = RDCMIN(bytesToCopy, (size_t)32);
+      for(size_t j = 0; j < logBytes; j++)
+      {
+        if(j > 0)
+          byteStr += " ";
+        char buf[4];
+        sprintf_s(buf, sizeof(buf), "%02X", funcBytes[j]);
+        byteStr += buf;
+      }
+      RDCLOG("[EAT_HOOK] Original function %s first %zu bytes: %s", functionName, bytesToCopy, byteStr.c_str());
+
+      // Add JMP back to original function + bytesToCopy (continuing execution after our hook)
+      // Format: JMP [RIP+0] followed by 64-bit target address
+      // 0xFF 0x25 [32-bit offset=0] [64-bit target address]
+      trampolineBytes[bytesToCopy] = 0xFF;  // JMP [RIP+offset]
+      trampolineBytes[bytesToCopy + 1] = 0x25;  // ModR/M byte for [RIP+offset]
+      *(DWORD *)(trampolineBytes + bytesToCopy + 2) = 0;  // 32-bit offset (0 = next instruction)
+      void *targetAddr = (void *)((BYTE *)originalFunc + bytesToCopy);
+      *(void **)(trampolineBytes + bytesToCopy + 6) = targetAddr;  // 64-bit target address
+      
+      // Flush instruction cache for trampoline to ensure CPU sees the new code
+      FlushInstructionCache(GetCurrentProcess(), trampoline, bytesToCopy + 14);
+      
+      // Verify the JMP instruction was written correctly
+      RDCLOG("[EAT_HOOK] Created trampoline for %s: copied %zu bytes, JMP back to 0x%p", 
+             functionName, bytesToCopy, targetAddr);
+      RDCLOG("[EAT_HOOK] Trampoline JMP instruction: 0x%02X 0x%02X [offset=0x%08X] [target=0x%p]", 
+             trampolineBytes[bytesToCopy], trampolineBytes[bytesToCopy + 1], 
+             *(DWORD *)(trampolineBytes + bytesToCopy + 2), 
+             *(void **)(trampolineBytes + bytesToCopy + 6));
+
+      // Now hook the original function
+      // IMPORTANT: Make the function writable only when needed, and restore protection immediately
+      // This minimizes the time window where the code section appears writable (anti-cheat detection)
+      DWORD oldProtect;
+      if(!VirtualProtect(originalFunc, bytesToCopy, PAGE_EXECUTE_READWRITE, &oldProtect))
+      {
+        RDCERR("Failed to make function writable for %s", functionName);
+        VirtualFree(trampoline, 0, MEM_RELEASE);
+        return false;
+      }
+
+      // Prepare hook bytes in a local buffer first to minimize modification time
+      BYTE hookBytes[32];
+      memset(hookBytes, 0x90, sizeof(hookBytes));  // Fill with NOPs first
+      
+      // Write JMP to our hook (only need 14 bytes for JMP instruction)
+      hookBytes[0] = 0xFF;  // JMP [RIP+0]
+      hookBytes[1] = 0x25;
+      *(DWORD *)(hookBytes + 2) = 0;
+      *(void **)(hookBytes + 6) = hookFunc;
+      
+      // Copy prepared bytes atomically (minimize visible modification window)
+      memcpy(funcBytes, hookBytes, bytesToCopy);
+
+      // Ensure memory writes are visible before flushing instruction cache
+      MemoryBarrier();  // Memory barrier to ensure all writes are committed
+      
+      // Flush instruction cache to ensure CPU sees the new code
+      FlushInstructionCache(GetCurrentProcess(), originalFunc, bytesToCopy);
+      
+      // Restore memory protection IMMEDIATELY after hooking
+      // This is critical for anti-cheat evasion - code section should not remain writable
+      VirtualProtect(originalFunc, bytesToCopy, oldProtect, &oldProtect);
+
+      // NOTE: Export table RVA modification is DISABLED to avoid crashes
+      // Modifying export table RVA may break exception handling information (.pdata section)
+      // Inline hook will still work for all function calls
+      RDCLOG("[EAT_HOOK] Export table RVA modification disabled for %s (hook=0x%p), using inline hook only", 
+             functionName, hookFunc);
+
+      // Store mappings
+      s_Trampolines[originalFunc] = trampoline;
+      s_EATHooks[originalFunc] = hookFunc;
+      s_EATOriginals[hookFunc] = trampoline;  // Hook should call trampoline, not original
+      
+      if(outOriginal)
+        *outOriginal = trampoline;  // Return trampoline address
+
+      RDCLOG("[EAT_HOOK] Successfully hooked %s in module 0x%p (original=0x%p, hook=0x%p, trampoline=0x%p)", 
+             functionName, module, originalFunc, hookFunc, trampoline);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static void ApplyExportTableHooks()
+{
+  // Prevent re-hooking during function execution to avoid corrupting running code
+  if(s_EATHookInProgress)
+  {
+    RDCLOG("[EAT_HOOK] EAT hook application already in progress, skipping to avoid corruption");
+    return;
+  }
+  
+  RDCLOG("[EAT_HOOK] Applying Export Address Table hooks...");
+
+  // Hook d3d12.dll exports
+  HMODULE d3d12 = GetModuleHandleA("d3d12.dll");
+  if(d3d12)
+  {
+    RDCLOG("[EAT_HOOK] Found d3d12.dll at 0x%p", d3d12);
+    
+    // Get the D3D12CreateDevice hook function from our registered hooks
+    for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
+    {
+      if(_stricmp(it->first.c_str(), "d3d12.dll") == 0)
+      {
+        for(const FunctionHook &hook : it->second.FunctionHooks)
+        {
+          if(hook.function == "D3D12CreateDevice")
+          {
+            void *original = NULL;
+            if(HookExportFunction(d3d12, "D3D12CreateDevice", hook.hook, &original))
+            {
+              // Update the original function pointer
+              if(hook.orig && original)
+                *hook.orig = original;
+              
+              RDCLOG("[EAT_HOOK] ✓ Hooked D3D12CreateDevice export");
+            }
+            else
+            {
+              RDCWARN("[EAT_HOOK] ✗ Failed to hook D3D12CreateDevice export");
+            }
+          }
+        }
+      }
+    }
+  }
+  else
+  {
+    RDCLOG("[EAT_HOOK] d3d12.dll not loaded yet, EAT hooks will be applied when it loads");
+  }
+
+  // Hook d3d11.dll exports
+  HMODULE d3d11 = GetModuleHandleA("d3d11.dll");
+  if(d3d11)
+  {
+    RDCLOG("[EAT_HOOK] Found d3d11.dll at 0x%p", d3d11);
+
+    for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
+    {
+      if(_stricmp(it->first.c_str(), "d3d11.dll") == 0)
+      {
+        for(const FunctionHook &hook : it->second.FunctionHooks)
+        {
+          if(hook.function == "D3D11CreateDevice" || hook.function == "D3D11CreateDeviceAndSwapChain")
+          {
+            void *original = NULL;
+            if(HookExportFunction(d3d11, hook.function.c_str(), hook.hook, &original))
+            {
+              if(hook.orig && original)
+                *hook.orig = original;
+              
+              RDCLOG("[EAT_HOOK] ✓ Hooked %s export", hook.function.c_str());
+            }
+            else
+            {
+              RDCWARN("[EAT_HOOK] ✗ Failed to hook %s export", hook.function.c_str());
+            }
+          }
+        }
+      }
+    }
+  }
+  else
+  {
+    RDCLOG("[EAT_HOOK] d3d11.dll not loaded yet");
+  }
+  
+  // Hook dxgi.dll exports
+  HMODULE dxgi = GetModuleHandleA("dxgi.dll");
+  if(dxgi)
+  {
+    RDCLOG("[EAT_HOOK] Found dxgi.dll at 0x%p", dxgi);
+    RDCLOG("[HOOK_DIAG] dxgi.dll was already loaded when hook installation started - applying EAT hooks to ensure CreateDXGIFactory is intercepted");
+    
+    // Apply EAT hooks for dxgi.dll exports to catch direct calls that bypass IAT
+    for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
+    {
+      if(_stricmp(it->first.c_str(), "dxgi.dll") == 0)
+      {
+        for(const FunctionHook &hook : it->second.FunctionHooks)
+        {
+          // Hook all CreateDXGIFactory variants and debug interfaces
+          if(hook.function == "CreateDXGIFactory" || 
+             hook.function == "CreateDXGIFactory1" || 
+             hook.function == "CreateDXGIFactory2" ||
+             hook.function == "DXGIGetDebugInterface" ||
+             hook.function == "DXGIGetDebugInterface1")
+          {
+            void *original = NULL;
+            if(HookExportFunction(dxgi, hook.function.c_str(), hook.hook, &original))
+            {
+              if(hook.orig && original)
+                *hook.orig = original;
+              
+              RDCLOG("[EAT_HOOK] ✓ Hooked %s export", hook.function.c_str());
+            }
+            else
+            {
+              RDCWARN("[EAT_HOOK] ✗ Failed to hook %s export", hook.function.c_str());
+            }
+          }
+        }
+      }
+    }
+  }
+  else
+  {
+    RDCLOG("[EAT_HOOK] dxgi.dll not loaded yet");
+  }
+}
+
+// Diagnostic function to check D3D12/DXGI hook status
+static void DiagnoseGraphicsAPIHookStatus()
+{
+  if(!HOOK_DIAG_ENABLED())
+    return;
+
+  HOOK_DIAG_BASIC("=== Graphics API Hook Status Diagnostic ===");
+
+  // Check if graphics API DLLs are loaded
+  const char *graphicsDlls[] = {"d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10.dll"};
+  
+  for(const char *dllName : graphicsDlls)
+  {
+    HMODULE hMod = GetModuleHandleA(dllName);
+    if(hMod)
+    {
+      HOOK_DIAG_BASIC("  %s: LOADED at 0x%p", dllName, hMod);
+      
+      // Check if we have hooks registered for this DLL
+      auto it = s_HookData->DllHooks.find(strlower(rdcstr(dllName)));
+      if(it != s_HookData->DllHooks.end())
+      {
+        HOOK_DIAG_BASIC("    Registered hooks: %zu functions", it->second.FunctionHooks.size());
+        HOOK_DIAG_BASIC("    Module tracked: %s", it->second.module ? "YES" : "NO");
+        
+        if(Win32_Hook_DiagnosticLevel() >= 2)
+        {
+          for(const FunctionHook &hook : it->second.FunctionHooks)
+          {
+            void *actualFunc = GetProcAddress(hMod, hook.function.c_str());
+            HOOK_DIAG_DETAILED("      %s: actual=0x%p, hook=0x%p, orig=0x%p", 
+                               hook.function.c_str(), actualFunc, hook.hook,
+                               hook.orig ? *hook.orig : NULL);
+          }
+        }
+      }
+      else
+      {
+        HOOK_DIAG_BASIC("    WARNING: No hooks registered for this DLL!");
+      }
+    }
+    else
+    {
+      HOOK_DIAG_BASIC("  %s: NOT LOADED", dllName);
+    }
+  }
+  
+  HOOK_DIAG_BASIC("=== End Diagnostic ===");
 }
 
 void Win32_RegisterManualModuleHooking()

@@ -84,14 +84,16 @@ public:
 
   ULONG STDMETHODCALLTYPE AddRef()
   {
-    InterlockedIncrement(&m_iRefcount);
-    return m_iRefcount;
+    unsigned int newCount = InterlockedIncrement(&m_iRefcount);
+     return newCount;
   }
   ULONG STDMETHODCALLTYPE Release()
   {
     unsigned int ret = InterlockedDecrement(&m_iRefcount);
     if(ret == 0)
+    {
       delete this;
+    }
     return ret;
   }
 
@@ -103,14 +105,20 @@ public:
       /* [in] */ UINT DataSize,
       /* [in] */ const void *pData)
   {
-    return m_pReal->SetPrivateData(Name, DataSize, pData);
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::SetPrivateData called, this=0x%p, m_pReal=0x%p", this, m_pReal);
+    HRESULT ret = m_pReal ? m_pReal->SetPrivateData(Name, DataSize, pData) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::SetPrivateData returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(
       /* [in] */ REFGUID Name,
       /* [in] */ const IUnknown *pUnknown)
   {
-    return m_pReal->SetPrivateDataInterface(Name, pUnknown);
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::SetPrivateDataInterface called, this=0x%p, m_pReal=0x%p", this, m_pReal);
+    HRESULT ret = m_pReal ? m_pReal->SetPrivateDataInterface(Name, pUnknown) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::SetPrivateDataInterface returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE GetPrivateData(
@@ -118,7 +126,10 @@ public:
       /* [out][in] */ UINT *pDataSize,
       /* [out] */ void *pData)
   {
-    return m_pReal->GetPrivateData(Name, pDataSize, pData);
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::GetPrivateData called, this=0x%p, m_pReal=0x%p", this, m_pReal);
+    HRESULT ret = m_pReal ? m_pReal->GetPrivateData(Name, pDataSize, pData) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] RefCountDXGIObject::GetPrivateData returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE GetParent(
@@ -614,13 +625,32 @@ public:
 
   static ID3DDevice *GetD3DDevice(IUnknown *dev)
   {
+    RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice called with dev=0x%p, callback count=%zu", 
+           dev, m_D3DCallbacks.size());
+    
     for(size_t i = 0; i < m_D3DCallbacks.size(); i++)
     {
-      ID3DDevice *d3d = m_D3DCallbacks[i](dev);
+      RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice: Calling callback[%zu]", i);
+      ID3DDevice *d3d = NULL;
+      try
+      {
+        d3d = m_D3DCallbacks[i](dev);
+        RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice: callback[%zu] returned d3d=0x%p", i, d3d);
+      }
+      catch(...)
+      {
+        RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice: Exception in callback[%zu]!", i);
+        d3d = NULL;
+      }
+      
       if(d3d)
+      {
+        RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice: Found device via callback[%zu], returning d3d=0x%p", i, d3d);
         return d3d;
+      }
     }
 
+    RDCLOG("[HOOK_DIAG] WrappedIDXGISwapChain4::GetD3DDevice: No callback returned a device, returning NULL");
     return NULL;
   }
 
@@ -1345,9 +1375,15 @@ public:
       /* [annotation][out] */
       __out IDXGIAdapter **pAdapter)
   {
-    HRESULT ret = m_pReal->GetAdapter(pAdapter);
-    if(SUCCEEDED(ret))
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetAdapter called, this=0x%p, pAdapter=0x%p, m_pReal=0x%p", this, pAdapter, m_pReal);
+    HRESULT ret = m_pReal ? m_pReal->GetAdapter(pAdapter) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetAdapter: m_pReal->GetAdapter returned hr=0x%x, *pAdapter=0x%p", ret, pAdapter ? *pAdapter : NULL);
+    if(SUCCEEDED(ret) && pAdapter && *pAdapter)
+    {
+      RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetAdapter: Wrapping adapter");
       *pAdapter = (IDXGIAdapter *)(new WrappedIDXGIAdapter4(*pAdapter));
+      RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetAdapter: Adapter wrapped, new *pAdapter=0x%p", *pAdapter);
+    }
     return ret;
   }
 
@@ -1361,7 +1397,10 @@ public:
       /* [annotation][out] */
       __out IDXGISurface **ppSurface)
   {
-    return m_pReal->CreateSurface(pDesc, NumSurfaces, Usage, pSharedResource, ppSurface);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::CreateSurface called, this=0x%p, m_pReal=0x%p", this, m_pReal);
+    HRESULT ret = m_pReal ? m_pReal->CreateSurface(pDesc, NumSurfaces, Usage, pSharedResource, ppSurface) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::CreateSurface returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE QueryResourceResidency(
@@ -1371,20 +1410,29 @@ public:
       __out_ecount(NumResources) DXGI_RESIDENCY *pResidencyStatus,
       /* [in] */ UINT NumResources)
   {
-    return m_pReal->QueryResourceResidency(ppResources, pResidencyStatus, NumResources);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::QueryResourceResidency called, this=0x%p, m_pReal=0x%p, NumResources=%u", this, m_pReal, NumResources);
+    HRESULT ret = m_pReal ? m_pReal->QueryResourceResidency(ppResources, pResidencyStatus, NumResources) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::QueryResourceResidency returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE SetGPUThreadPriority(
       /* [in] */ INT Priority)
   {
-    return m_pReal->SetGPUThreadPriority(Priority);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::SetGPUThreadPriority called, this=0x%p, m_pReal=0x%p, Priority=%d", this, m_pReal, Priority);
+    HRESULT ret = m_pReal ? m_pReal->SetGPUThreadPriority(Priority) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::SetGPUThreadPriority returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE GetGPUThreadPriority(
       /* [annotation][retval][out] */
       __out INT *pPriority)
   {
-    return m_pReal->GetGPUThreadPriority(pPriority);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetGPUThreadPriority called, this=0x%p, m_pReal=0x%p, pPriority=0x%p", this, m_pReal, pPriority);
+    HRESULT ret = m_pReal ? m_pReal->GetGPUThreadPriority(pPriority) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetGPUThreadPriority returned hr=0x%x, *pPriority=%d", ret, pPriority ? *pPriority : 0);
+    return ret;
   }
 
   //////////////////////////////
@@ -1393,14 +1441,20 @@ public:
   virtual HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(
       /* [in] */ UINT MaxLatency)
   {
-    return m_pReal1->SetMaximumFrameLatency(MaxLatency);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::SetMaximumFrameLatency called, this=0x%p, m_pReal1=0x%p, MaxLatency=%u", this, m_pReal1, MaxLatency);
+    HRESULT ret = m_pReal1 ? m_pReal1->SetMaximumFrameLatency(MaxLatency) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::SetMaximumFrameLatency returned hr=0x%x", ret);
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(
       /* [annotation][out] */
       __out UINT *pMaxLatency)
   {
-    return m_pReal1->GetMaximumFrameLatency(pMaxLatency);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetMaximumFrameLatency called, this=0x%p, m_pReal1=0x%p, pMaxLatency=0x%p", this, m_pReal1, pMaxLatency);
+    HRESULT ret = m_pReal1 ? m_pReal1->GetMaximumFrameLatency(pMaxLatency) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::GetMaximumFrameLatency returned hr=0x%x, *pMaxLatency=%u", ret, pMaxLatency ? *pMaxLatency : 0);
+    return ret;
   }
 
   //////////////////////////////
@@ -1426,13 +1480,28 @@ public:
       /* [annotation][in] */
       _In_ HANDLE hEvent)
   {
-    return m_pReal2->EnqueueSetEvent(hEvent);
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::EnqueueSetEvent called, this=0x%p, m_pReal2=0x%p, hEvent=0x%p", this, m_pReal2, hEvent);
+    HRESULT ret = m_pReal2 ? m_pReal2->EnqueueSetEvent(hEvent) : E_FAIL;
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::EnqueueSetEvent returned hr=0x%x", ret);
+    return ret;
   }
 
   //////////////////////////////
   // implement IDXGIDevice3
 
-  virtual void STDMETHODCALLTYPE Trim() { m_pReal3->Trim(); }
+  virtual void STDMETHODCALLTYPE Trim()
+  {
+    RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::Trim called, this=0x%p, m_pReal3=0x%p", this, m_pReal3);
+    if(m_pReal3)
+    {
+      m_pReal3->Trim();
+      RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::Trim completed");
+    }
+    else
+    {
+      RDCLOG("[HOOK_DIAG] WrappedIDXGIDevice4::Trim: m_pReal3 is NULL, skipping");
+    }
+  }
   //////////////////////////////
   // implement IDXGIDevice4
 
