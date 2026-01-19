@@ -37,29 +37,14 @@ rdcarray<D3DDeviceCallback> WrappedIDXGISwapChain4::m_D3DCallbacks;
 
 ID3DDevice *GetD3DDevice(IUnknown *pDevice)
 {
-  RDCLOG("[HOOK_DIAG] GetD3DDevice called with pDevice=0x%p", pDevice);
-  
   ID3DDevice *wrapDevice = NULL;
 
   if(WrappedIDXGIDevice4::IsAlloc(pDevice))
-  {
-    RDCLOG("[HOOK_DIAG] GetD3DDevice: pDevice=0x%p is a WrappedIDXGIDevice4, calling GetD3DDevice()", pDevice);
     wrapDevice = ((WrappedIDXGIDevice4 *)(IDXGIDevice3 *)pDevice)->GetD3DDevice();
-    RDCLOG("[HOOK_DIAG] GetD3DDevice: WrappedIDXGIDevice4::GetD3DDevice() returned wrapDevice=0x%p", wrapDevice);
-  }
-  else
-  {
-    RDCLOG("[HOOK_DIAG] GetD3DDevice: pDevice=0x%p is NOT a WrappedIDXGIDevice4 (IsAlloc returned false)", pDevice);
-  }
 
   if(wrapDevice == NULL)
-  {
-    RDCLOG("[HOOK_DIAG] GetD3DDevice: wrapDevice is NULL, trying WrappedIDXGISwapChain4::GetD3DDevice(pDevice=0x%p)", pDevice);
     wrapDevice = WrappedIDXGISwapChain4::GetD3DDevice(pDevice);
-    RDCLOG("[HOOK_DIAG] GetD3DDevice: WrappedIDXGISwapChain4::GetD3DDevice() returned wrapDevice=0x%p", wrapDevice);
-  }
 
-  RDCLOG("[HOOK_DIAG] GetD3DDevice returning wrapDevice=0x%p", wrapDevice);
   return wrapDevice;
 }
 
@@ -1285,19 +1270,7 @@ HRESULT WrappedIDXGIFactory::CreateSwapChainForHwnd(
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc, IDXGIOutput *pRestrictToOutput,
     IDXGISwapChain1 **ppSwapChain)
 {
-  RDCLOG("[HOOK_DIAG] WrappedIDXGIFactory::CreateSwapChainForHwnd called, pDevice=0x%p, hWnd=0x%p", pDevice, hWnd);
-  RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd: About to call GetD3DDevice(pDevice=0x%p)", pDevice);
-  ID3DDevice *wrapDevice = NULL;
-  try
-  {
-    wrapDevice = GetD3DDevice(pDevice);
-    RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd: GetD3DDevice returned wrapDevice=0x%p", wrapDevice);
-  }
-  catch(...)
-  {
-    RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd: Exception caught in GetD3DDevice!");
-    wrapDevice = NULL;
-  }
+  ID3DDevice *wrapDevice = GetD3DDevice(pDevice);
 
   WrappedIDXGIOutput6 *wrappedOutput = (WrappedIDXGIOutput6 *)pRestrictToOutput;
   IDXGIOutput *unwrappedOutput = wrappedOutput ? wrappedOutput->GetReal() : NULL;
@@ -1324,15 +1297,7 @@ HRESULT WrappedIDXGIFactory::CreateSwapChainForHwnd(
                                                    pFullscreenDesc, unwrappedOutput, ppSwapChain);
 
     if(SUCCEEDED(ret))
-    {
-      RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd succeeded, wrapping swap chain 0x%p", *ppSwapChain);
       *ppSwapChain = new WrappedIDXGISwapChain4(*ppSwapChain, hWnd, wrapDevice);
-      RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd: Swap chain wrapped, new *ppSwapChain=0x%p", *ppSwapChain);
-    }
-    else
-    {
-      RDCLOG("[HOOK_DIAG] CreateSwapChainForHwnd failed, HRESULT=0x%x", ret);
-    }
 
     return ret;
   }

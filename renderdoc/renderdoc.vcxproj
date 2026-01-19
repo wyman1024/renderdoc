@@ -201,7 +201,6 @@
     <ClInclude Include="common\dds_readwrite.h" />
     <ClInclude Include="common\formatting.h" />
     <ClInclude Include="common\globalconfig.h" />
-    <ClInclude Include="common\hook_logger.h" />
     <ClInclude Include="common\result.h" />
     <ClInclude Include="common\shader_cache.h" />
     <ClInclude Include="common\tex_data.h" />
@@ -538,7 +537,6 @@
     <ClCompile Include="android\jdwp_util.cpp" />
     <ClCompile Include="common\common.cpp" />
     <ClCompile Include="common\dds_readwrite.cpp" />
-    <ClCompile Include="common\hook_logger.cpp" />
     <ClCompile Include="common\jobsystem.cpp" />
     <ClCompile Include="common\jobsystem_tests.cpp" />
     <ClCompile Include="common\threading_tests.cpp" />

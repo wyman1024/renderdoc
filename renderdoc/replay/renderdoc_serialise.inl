@@ -103,10 +103,8 @@ void DoSerialise(SerialiserType &ser, CaptureOptions &el)
   SERIALISE_MEMBER(captureAllCmdLists);
   SERIALISE_MEMBER(debugOutputMute);
   SERIALISE_MEMBER(softMemoryLimit);
-  SERIALISE_MEMBER(logOnlyMode);
-  SERIALISE_MEMBER(logOutputPath);
 
-  SIZE_CHECK(56);
+  SIZE_CHECK(24);
 }
 
 template <typename SerialiserType>

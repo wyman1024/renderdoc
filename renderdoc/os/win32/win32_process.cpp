@@ -29,7 +29,6 @@
 #include <Psapi.h>
 #include <tchar.h>
 #include <tlhelp32.h>
-#include "api/replay/renderdoc_replay.h"
 #include "common/formatting.h"
 #include "core/core.h"
 #include "os/os_specific.h"
@@ -546,12 +545,6 @@ static PROCESS_INFORMATION RunProcess(const rdcstr &app, const rdcstr &workingDi
     }
   }
 
-  RDCLOG("[PROCESS_DIAG] Attempting to create process:");
-  RDCLOG("[PROCESS_DIAG]   App: %s", app.c_str());
-  RDCLOG("[PROCESS_DIAG]   CmdLine: %s", cmdLine.c_str());
-  RDCLOG("[PROCESS_DIAG]   WorkDir: %s", workingDir.empty() ? "(auto)" : workingDir.c_str());
-  RDCLOG("[PROCESS_DIAG]   Flags: CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT");
-
   BOOL retValue = CreateProcessW(
       NULL, paramsAlloc, &pSec, &tSec, inheritHandles, CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
       envString.empty() ? NULL : (void *)envString.data(), workdir.c_str(), &si, &pi);
@@ -569,40 +562,10 @@ static PROCESS_INFORMATION RunProcess(const rdcstr &app, const rdcstr &workingDi
   if(!retValue)
   {
     if(!internal)
-    {
       RDCWARN("Process %s could not be loaded (error %d).", app.c_str(), err);
-      RDCLOG("[PROCESS_DIAG] CreateProcessW failed with error %d (0x%08x)", err, err);
-      
-      // Common error codes
-      switch(err)
-      {
-        case ERROR_FILE_NOT_FOUND:
-          RDCLOG("[PROCESS_DIAG] ERROR_FILE_NOT_FOUND: The executable file was not found");
-          break;
-        case ERROR_PATH_NOT_FOUND:
-          RDCLOG("[PROCESS_DIAG] ERROR_PATH_NOT_FOUND: The path was not found");
-          break;
-        case ERROR_ACCESS_DENIED:
-          RDCLOG("[PROCESS_DIAG] ERROR_ACCESS_DENIED: Access denied (check permissions/anti-cheat)");
-          break;
-        case ERROR_BAD_EXE_FORMAT:
-          RDCLOG("[PROCESS_DIAG] ERROR_BAD_EXE_FORMAT: Invalid executable format");
-          break;
-        case ERROR_ELEVATION_REQUIRED:
-          RDCLOG("[PROCESS_DIAG] ERROR_ELEVATION_REQUIRED: Administrator rights required");
-          break;
-        default:
-          RDCLOG("[PROCESS_DIAG] Unknown error code");
-          break;
-      }
-    }
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     RDCEraseEl(pi);
-  }
-  else
-  {
-    RDCLOG("[PROCESS_DIAG] Process created successfully, PID=%u", pi.dwProcessId);
   }
 
   return pi;

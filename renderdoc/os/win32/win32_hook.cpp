@@ -70,7 +70,6 @@ std::map<void **, void *> s_InstalledHooks;
 Threading::CriticalSection installedLock;
 
 // Forward declarations
-static void DiagnoseGraphicsAPIHookStatus();
 static void ApplyExportTableHooks();
 
 void Win32_ManualHookModule(rdcstr modName, HMODULE module);
@@ -1195,9 +1194,6 @@ void LibraryHooks::EndHookRegistration()
   // Apply Export Address Table hooks for D3D11/D3D12
   // This catches calls that bypass IAT (e.g., direct GetProcAddress before our hooks are active)
   ApplyExportTableHooks();
-
-  // Run diagnostic after initial hook setup
-  DiagnoseGraphicsAPIHookStatus();
 }
 
 void LibraryHooks::Refresh()
@@ -1844,56 +1840,6 @@ static void ApplyExportTableHooks()
   {
     RDCLOG("[EAT_HOOK] dxgi.dll not loaded yet");
   }
-}
-
-// Diagnostic function to check D3D12/DXGI hook status
-static void DiagnoseGraphicsAPIHookStatus()
-{
-  if(!HOOK_DIAG_ENABLED())
-    return;
-
-  HOOK_DIAG_BASIC("=== Graphics API Hook Status Diagnostic ===");
-
-  // Check if graphics API DLLs are loaded
-  const char *graphicsDlls[] = {"d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10.dll"};
-  
-  for(const char *dllName : graphicsDlls)
-  {
-    HMODULE hMod = GetModuleHandleA(dllName);
-    if(hMod)
-    {
-      HOOK_DIAG_BASIC("  %s: LOADED at 0x%p", dllName, hMod);
-      
-      // Check if we have hooks registered for this DLL
-      auto it = s_HookData->DllHooks.find(strlower(rdcstr(dllName)));
-      if(it != s_HookData->DllHooks.end())
-      {
-        HOOK_DIAG_BASIC("    Registered hooks: %zu functions", it->second.FunctionHooks.size());
-        HOOK_DIAG_BASIC("    Module tracked: %s", it->second.module ? "YES" : "NO");
-        
-        if(Win32_Hook_DiagnosticLevel() >= 2)
-        {
-          for(const FunctionHook &hook : it->second.FunctionHooks)
-          {
-            void *actualFunc = GetProcAddress(hMod, hook.function.c_str());
-            HOOK_DIAG_DETAILED("      %s: actual=0x%p, hook=0x%p, orig=0x%p", 
-                               hook.function.c_str(), actualFunc, hook.hook,
-                               hook.orig ? *hook.orig : NULL);
-          }
-        }
-      }
-      else
-      {
-        HOOK_DIAG_BASIC("    WARNING: No hooks registered for this DLL!");
-      }
-    }
-    else
-    {
-      HOOK_DIAG_BASIC("  %s: NOT LOADED", dllName);
-    }
-  }
-  
-  HOOK_DIAG_BASIC("=== End Diagnostic ===");
 }
 
 void Win32_RegisterManualModuleHooking()

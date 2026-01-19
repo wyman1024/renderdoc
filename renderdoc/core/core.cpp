@@ -28,7 +28,6 @@
 #include <algorithm>
 #include "api/replay/version.h"
 #include "common/common.h"
-#include "common/hook_logger.h"
 #include "common/threading.h"
 #include "core/settings.h"
 #include "hooks/hooks.h"
@@ -1946,12 +1945,6 @@ void RenderDoc::EnableVendorExtensions(VendorExtensions ext)
 void RenderDoc::SetCaptureOptions(const CaptureOptions &opts)
 {
   m_Options = opts;
-
-  // Initialize hook logger if log-only mode is enabled
-  if(opts.logOnlyMode)
-  {
-    HookLogger::Initialize(opts.logOutputPath);
-  }
 
   LibraryHooks::OptionsUpdated();
 }

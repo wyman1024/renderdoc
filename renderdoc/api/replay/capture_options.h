@@ -246,29 +246,6 @@ Default - 0 Megabytes
 :type: int
 )");
   uint32_t softMemoryLimit;
-
-  DOCUMENT(R"(Enable log-only mode for hooking. In this mode, hooks will only log function calls
-without creating wrapper objects or performing any capture operations. This ensures complete
-transparency to the application.
-
-Default - disabled
-
-``True`` - Only log function calls, do not wrap or capture anything.
-
-``False`` - Normal capture mode with full wrapping and capture functionality.
-
-:type: bool
-)");
-  bool logOnlyMode;
-
-  DOCUMENT(R"(Path to output log file when log-only mode is enabled. If empty, logs will be
-output to console.
-
-Default - empty (console output)
-
-:type: str
-)");
-  rdcstr logOutputPath;
 };
 
 DECLARE_REFLECTION_STRUCT(CaptureOptions);

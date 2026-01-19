@@ -272,67 +272,36 @@ private:
 
   static HRESULT WINAPI CreateDXGIFactory_hook(__in REFIID riid, __out void **ppFactory)
   {
-    RDCLOG("[HOOK_DIAG] CreateDXGIFactory_hook called! riid=%s", ToStr(riid).c_str());
     if(ppFactory)
       *ppFactory = NULL;
     HRESULT ret = dxgihooks.CreateDXGIFactory()(riid, ppFactory);
 
     if(SUCCEEDED(ret))
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory succeeded, wrapping factory (ppFactory=0x%p, *ppFactory=0x%p)", ppFactory, ppFactory ? *ppFactory : NULL);
       RefCountDXGIObject::HandleWrap("CreateDXGIFactory", riid, ppFactory);
-      RDCLOG("[HOOK_DIAG] After HandleWrap: *ppFactory=0x%p", ppFactory ? *ppFactory : NULL);
-    }
-    else
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory failed: %s", ToStr(ret).c_str());
-      // Ensure ppFactory is set to NULL on failure, as per COM specification
-      if(ppFactory)
-        *ppFactory = NULL;
-    }
 
     return ret;
   }
 
   static HRESULT WINAPI CreateDXGIFactory1_hook(__in REFIID riid, __out void **ppFactory)
   {
-    RDCLOG("[HOOK_DIAG] CreateDXGIFactory1_hook called! riid=%s", ToStr(riid).c_str());
     if(ppFactory)
       *ppFactory = NULL;
     HRESULT ret = dxgihooks.CreateDXGIFactory1()(riid, ppFactory);
 
     if(SUCCEEDED(ret))
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory1 succeeded, wrapping factory");
       RefCountDXGIObject::HandleWrap("CreateDXGIFactory1", riid, ppFactory);
-    }
-    else
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory1 failed: %s", ToStr(ret).c_str());
-      // Ensure ppFactory is set to NULL on failure, as per COM specification
-      if(ppFactory)
-        *ppFactory = NULL;
-    }
 
     return ret;
   }
 
   static HRESULT WINAPI CreateDXGIFactory2_hook(UINT Flags, REFIID riid, void **ppFactory)
   {
-    RDCLOG("[HOOK_DIAG] CreateDXGIFactory2_hook called! Flags=0x%x, riid=%s", Flags, ToStr(riid).c_str());
     if(ppFactory)
       *ppFactory = NULL;
     HRESULT ret = dxgihooks.CreateDXGIFactory2()(Flags, riid, ppFactory);
 
     if(SUCCEEDED(ret))
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory2 succeeded, wrapping factory");
       RefCountDXGIObject::HandleWrap("CreateDXGIFactory2", riid, ppFactory);
-    }
-    else
-    {
-      RDCLOG("[HOOK_DIAG] CreateDXGIFactory2 failed: %s", ToStr(ret).c_str());
-    }
 
     return ret;
   }

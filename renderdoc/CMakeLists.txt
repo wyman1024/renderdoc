@@ -124,8 +124,6 @@ set(sources
     api/replay/renderdoc_tostr.inl
     common/common.cpp
     common/common.h
-    common/hook_logger.cpp
-    common/hook_logger.h
     common/custom_assert.h
     common/dds_readwrite.cpp
     common/dds_readwrite.h

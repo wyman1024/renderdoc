@@ -57,7 +57,6 @@ int RENDERDOC_CC SetCaptureOptionU32(RENDERDOC_CaptureOption opt, uint32_t val)
         RDCWARN("AllowUnsupportedVendorExtensions unexpected parameter %x", val);
       break;
     case eRENDERDOC_Option_SoftMemoryLimit: opts.softMemoryLimit = val; break;
-    case eRENDERDOC_Option_LogOnlyMode: opts.logOnlyMode = (val != 0); break;
     default: RDCLOG("Unrecognised capture option '%d'", opt); return 0;
   }
 
@@ -91,7 +90,6 @@ int RENDERDOC_CC SetCaptureOptionF32(RENDERDOC_CaptureOption opt, float val)
       RDCWARN("AllowUnsupportedVendorExtensions unexpected parameter %f", val);
       break;
     case eRENDERDOC_Option_SoftMemoryLimit: opts.softMemoryLimit = (uint32_t)val; break;
-    case eRENDERDOC_Option_LogOnlyMode: opts.logOnlyMode = (val != 0.0f); break;
     default: RDCLOG("Unrecognised capture option '%d'", opt); return 0;
   }
 
@@ -131,8 +129,6 @@ uint32_t RENDERDOC_CC GetCaptureOptionU32(RENDERDOC_CaptureOption opt)
     case eRENDERDOC_Option_AllowUnsupportedVendorExtensions: return 0;
     case eRENDERDOC_Option_SoftMemoryLimit:
       return (RenderDoc::Inst().GetCaptureOptions().softMemoryLimit);
-    case eRENDERDOC_Option_LogOnlyMode:
-      return (RenderDoc::Inst().GetCaptureOptions().logOnlyMode ? 1 : 0);
     default: break;
   }
 
@@ -172,8 +168,6 @@ float RENDERDOC_CC GetCaptureOptionF32(RENDERDOC_CaptureOption opt)
     case eRENDERDOC_Option_AllowUnsupportedVendorExtensions: return 0.0f;
     case eRENDERDOC_Option_SoftMemoryLimit:
       return (RenderDoc::Inst().GetCaptureOptions().softMemoryLimit * 1.0f);
-    case eRENDERDOC_Option_LogOnlyMode:
-      return (RenderDoc::Inst().GetCaptureOptions().logOnlyMode ? 1.0f : 0.0f);
     default: break;
   }
 
@@ -197,8 +191,6 @@ CaptureOptions::CaptureOptions()
   captureAllCmdLists = false;
   debugOutputMute = true;
   softMemoryLimit = 0;
-  logOnlyMode = false;
-  logOutputPath = "";
 }
 
 #if ENABLED(ENABLE_UNIT_TESTS)

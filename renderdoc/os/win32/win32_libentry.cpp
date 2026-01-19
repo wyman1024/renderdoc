@@ -66,23 +66,6 @@ static BOOL add_hooks()
   RenderDoc::Inst().Initialise();
 
   RDCLOG("Loading into %ls", curFile);
-  
-  // Check if target DLLs are already loaded before hook installation
-  HMODULE d3d11 = GetModuleHandleA("d3d11.dll");
-  HMODULE dxgi = GetModuleHandleA("dxgi.dll");
-  if(d3d11 || dxgi)
-  {
-    RDCLOG("[HOOK_DIAG] WARNING: Target DLLs already loaded before hook installation!");
-    if(d3d11)
-      RDCLOG("[HOOK_DIAG]   d3d11.dll loaded at 0x%p", d3d11);
-    if(dxgi)
-      RDCLOG("[HOOK_DIAG]   dxgi.dll loaded at 0x%p", dxgi);
-    RDCLOG("[HOOK_DIAG]   This may indicate late hook timing - some API calls may have been missed");
-  }
-  else
-  {
-    RDCLOG("[HOOK_DIAG] Target DLLs not loaded yet - hook timing is good");
-  }
 
   LibraryHooks::RegisterHooks();
 
