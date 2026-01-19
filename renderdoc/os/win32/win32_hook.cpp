@@ -40,31 +40,6 @@
 
 #define VERBOSE_DEBUG_HOOK OPTION_OFF
 
-// Hook diagnostic configuration
-RDOC_DEBUG_CONFIG(uint32_t, Win32_Hook_DiagnosticLevel, 0,
-                  "Enable hook diagnostic logging. 0=Off, 1=Basic, 2=Detailed, 3=Verbose");
-
-// Hook diagnostic logging macros
-#define HOOK_DIAG_ENABLED() (Win32_Hook_DiagnosticLevel() > 0)
-#define HOOK_DIAG_BASIC(...)                       \
-  do                                               \
-  {                                                \
-    if(Win32_Hook_DiagnosticLevel() >= 1)          \
-      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
-  } while(0)
-#define HOOK_DIAG_DETAILED(...)                    \
-  do                                               \
-  {                                                \
-    if(Win32_Hook_DiagnosticLevel() >= 2)          \
-      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
-  } while(0)
-#define HOOK_DIAG_VERBOSE(...)                     \
-  do                                               \
-  {                                                \
-    if(Win32_Hook_DiagnosticLevel() >= 3)          \
-      RDCLOG("[HOOK_DIAG] " __VA_ARGS__);          \
-  } while(0)
-
 // map from address of IAT entry, to original contents
 std::map<void **, void *> s_InstalledHooks;
 Threading::CriticalSection installedLock;
@@ -81,16 +56,12 @@ void Win32_ManualHookModule(rdcstr modName, HMODULE module);
   if(*IATentry == hook.hook)
   {
     already = true;
-    HOOK_DIAG_VERBOSE("  IAT entry for %s already hooked at 0x%p", hook.function.c_str(), IATentry);
     return true;
   }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
   RDCDEBUG("Patching IAT for %s: %p to %p", hook.function.c_str(), IATentry, hook.hook);
 #endif
-
-  HOOK_DIAG_DETAILED("  Patching IAT for %s: entry=0x%p, original=0x%p -> hook=0x%p",
-                     hook.function.c_str(), IATentry, *IATentry, hook.hook);
 
   {
     SCOPED_LOCK(installedLock);
@@ -102,7 +73,6 @@ void Win32_ManualHookModule(rdcstr modName, HMODULE module);
   if(!success)
   {
     RDCERR("Failed to make IAT entry writeable 0x%p", IATentry);
-    HOOK_DIAG_BASIC("  FAILED to make IAT entry writeable for %s at 0x%p", hook.function.c_str(), IATentry);
     return false;
   }
 
@@ -112,11 +82,9 @@ void Win32_ManualHookModule(rdcstr modName, HMODULE module);
   if(!success)
   {
     RDCERR("Failed to restore IAT entry protection 0x%p", IATentry);
-    HOOK_DIAG_BASIC("  FAILED to restore IAT entry protection for %s at 0x%p", hook.function.c_str(), IATentry);
     return false;
   }
 
-  HOOK_DIAG_DETAILED("  Successfully patched IAT for %s", hook.function.c_str());
   return true;
 }
 
@@ -236,12 +204,10 @@ struct CachedHookData
     }
     else if(strstr(lowername, "dxgi.dll"))
     {
-      RDCLOG("[HOOK_DIAG] dxgi.dll detected in ApplyHooks, checking if EAT hooks need to be applied");
       // Check if d3d11.dll is already loaded but EAT hooks haven't been applied yet
       HMODULE d3d11 = GetModuleHandleA("d3d11.dll");
       if(d3d11 && !s_d3d11_eat_hooked)
       {
-        RDCLOG("[HOOK_DIAG] d3d11.dll was already loaded before hook installation, applying EAT hooks now");
         s_d3d11_eat_hooked = true;
         ApplyExportTableHooks();
       }
@@ -349,17 +315,13 @@ struct CachedHookData
        strstr(lowername, "igvk") == lowername || strstr(lowername, "nvopencl") == lowername ||
        strstr(lowername, "nvapi") == lowername)
     {
-      HOOK_DIAG_VERBOSE("Skipping ignored module: %s", modName);
       return;
     }
 
     if(ignores.find(lowername) != ignores.end())
     {
-      HOOK_DIAG_VERBOSE("Skipping explicitly ignored module: %s", modName);
       return;
     }
-
-    HOOK_DIAG_VERBOSE("Processing module: %s (0x%p)", modName, module);
 
     // the module could have been unloaded after our toolhelp snapshot, especially if we spent a
     // long time
@@ -368,7 +330,6 @@ struct CachedHookData
     GetModuleFileNameW(module, modpath, 1023);
     if(modpath[0] == 0)
     {
-      HOOK_DIAG_VERBOSE("Module %s unloaded during processing", modName);
       return;
     }
 
@@ -433,18 +394,11 @@ struct CachedHookData
       RDCDEBUG("found IAT for %s", dllName);
 #endif
 
-      HOOK_DIAG_VERBOSE("  Found IAT for %s in module %s", dllName, modName);
-
       DllHookset *hookset = NULL;
 
       for(auto it = DllHooks.begin(); it != DllHooks.end(); ++it)
         if(!_stricmp(it->first.c_str(), dllName))
           hookset = &it->second;
-
-      if(hookset)
-      {
-        HOOK_DIAG_DETAILED("  Module %s imports from %s (we have hooks for this)", modName, dllName);
-      }
 
       if(hookset && importDesc->OriginalFirstThunk > 0)
       {
@@ -695,12 +649,8 @@ static void HookAllModules()
   if(!s_HookData->hookAll)
     return;
 
-  HOOK_DIAG_DETAILED("=== Scanning all loaded modules for hooking ===");
-
   ForAllModules(
       [](const MODULEENTRY32 &me32) { s_HookData->ApplyHooks(me32.szModule, me32.hModule); });
-
-  HOOK_DIAG_DETAILED("=== Module scanning complete ===");
 
   // check if we're already in this section of code, and if so don't go in again.
   int32_t prev = Atomic::CmpExch32(&s_HookData->posthooking, 0, 1);
@@ -793,14 +743,10 @@ HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE fileHandle, DW
   RDCDEBUG("LoadLibraryA(%s)", lpLibFileName);
 #endif
 
-  HOOK_DIAG_BASIC("LoadLibraryExA(\"%s\", flags=0x%x) -> 0x%p, will%s re-hook", 
-                  lpLibFileName ? lpLibFileName : "(null)", flags, mod, dohook ? "" : " NOT");
-
   DWORD err = GetLastError();
 
   if(dohook && mod && !IsAPISet(lpLibFileName))
   {
-    HOOK_DIAG_DETAILED("Re-scanning modules after loading %s", lpLibFileName);
     HookAllModules();
     
     // If this is d3d12.dll, d3d11.dll, or dxgi.dll, apply EAT hooks immediately
@@ -863,23 +809,15 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE fileHandle, D
 #endif
 
   rdcstr utf8Name = StringFormat::Wide2UTF8(lpLibFileName);
-  HOOK_DIAG_BASIC("LoadLibraryExW(\"%s\", flags=0x%x) -> will%s re-hook", 
-                  utf8Name.c_str(), flags, dohook ? "" : " NOT");
 
   // we can use the function naked, as when setting up the hook for LoadLibraryExA, our own module
   // was excluded from IAT patching
   HMODULE mod = LoadLibraryExW(lpLibFileName, fileHandle, flags);
 
-  if(mod)
-  {
-    HOOK_DIAG_BASIC("  Loaded %s at 0x%p", utf8Name.c_str(), mod);
-  }
-
   DWORD err = GetLastError();
 
   if(dohook && mod && !IsAPISet(lpLibFileName))
   {
-    HOOK_DIAG_DETAILED("Re-scanning modules after loading %s", utf8Name.c_str());
     HookAllModules();
     
     // Apply EAT hooks if this is a D3D or DXGI DLL
@@ -913,39 +851,8 @@ static bool OrdinalAsString(void *func)
 
 FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
 {
-  // Early diagnostic - log EVERY GetProcAddress call to d3d12.dll
-  static bool s_logged_entry = false;
-  if(!s_logged_entry)
-  {
-    s_logged_entry = true;
-    RDCLOG("=== Hooked_GetProcAddress is ACTIVE ===");
-  }
-
   if(mod == NULL || func == NULL || mod == s_HookData->ownmodule)
     return GetProcAddress(mod, func);
-
-  // Diagnostic logging for D3D12/DXGI function queries
-  if(!OrdinalAsString((void *)func))
-  {
-    const char *funcName = (const char *)func;
-    
-    // Check if this is d3d12.dll
-    char modName[MAX_PATH] = {0};
-    GetModuleFileNameA(mod, modName, MAX_PATH);
-    
-    // Convert to lowercase for comparison
-    for(int i = 0; modName[i]; i++)
-      modName[i] = (char)tolower(modName[i]);
-    
-    bool isD3D12 = strstr(modName, "d3d12.dll") != NULL;
-    bool isDXGI = strstr(modName, "dxgi.dll") != NULL;
-    
-    if(isD3D12 || isDXGI || 
-       strstr(funcName, "D3D12") || strstr(funcName, "DXGI") || strstr(funcName, "CreateDevice"))
-    {
-      RDCLOG("[GetProcAddress] Query: module=%s, function=%s", modName, funcName);
-    }
-  }
 
 #if ENABLED(VERBOSE_DEBUG_HOOK)
   if(OrdinalAsString((void *)func))
@@ -1138,12 +1045,6 @@ void LibraryHooks::IgnoreLibrary(const char *libraryName)
 void LibraryHooks::BeginHookRegistration()
 {
   InitHookData();
-  
-  if(HOOK_DIAG_ENABLED())
-  {
-    HOOK_DIAG_BASIC("=== Beginning Hook Registration ===");
-    HOOK_DIAG_BASIC("Diagnostic Level: %u", Win32_Hook_DiagnosticLevel());
-  }
 }
 
 // hook all functions for currently loaded modules.
@@ -1157,23 +1058,6 @@ void LibraryHooks::EndHookRegistration()
   RDCDEBUG("Applying hooks");
 #endif
 
-  if(HOOK_DIAG_ENABLED())
-  {
-    HOOK_DIAG_BASIC("=== Hook Registration Complete ===");
-    HOOK_DIAG_BASIC("Registered hooks for %zu DLLs:", s_HookData->DllHooks.size());
-    for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
-    {
-      HOOK_DIAG_BASIC("  %s: %zu functions", it->first.c_str(), it->second.FunctionHooks.size());
-      if(Win32_Hook_DiagnosticLevel() >= 2)
-      {
-        for(const FunctionHook &hook : it->second.FunctionHooks)
-        {
-          HOOK_DIAG_DETAILED("    - %s", hook.function.c_str());
-        }
-      }
-    }
-  }
-
   HookAllModules();
 
   if(s_HookData->missedOrdinals)
@@ -1181,8 +1065,6 @@ void LibraryHooks::EndHookRegistration()
 #if ENABLED(VERBOSE_DEBUG_HOOK)
     RDCDEBUG("Missed ordinals - applying hooks again");
 #endif
-
-    HOOK_DIAG_DETAILED("Missed ordinals detected, applying hooks again");
 
     // we need to do a second pass now that we know ordinal names to finally hook
     // some imports by ordinal only.
@@ -1245,49 +1127,8 @@ bool LibraryHooks::Detect(const char *identifier)
 
 // Export Address Table (EAT) Hook support
 // This hooks the DLL's export table directly, catching calls that bypass IAT
-static std::map<void *, void *> s_EATHooks;    // original -> hook
-static std::map<void *, void *> s_EATOriginals; // hook -> original
 static std::map<void *, void *> s_Trampolines;  // original -> trampoline
 static volatile bool s_EATHookInProgress = false;  // Prevent re-hooking during function execution
-
-// Helper function to get trampoline address for a hooked function
-// This is used by hook functions to call the original implementation
-void *GetTrampolineForHookedFunction(void *hookedAddress)
-{
-  RDCLOG("[EAT_HOOK] GetTrampolineForHookedFunction called with address 0x%p", hookedAddress);
-  
-  // First check if hookedAddress is already a trampoline
-  for(auto &pair : s_Trampolines)
-  {
-    void *trampolineAddr = pair.second;
-    if(trampolineAddr == hookedAddress)
-    {
-      RDCLOG("[EAT_HOOK]   ✓ Address is already a trampoline, returning as-is");
-      return hookedAddress;
-    }
-  }
-  
-  // Try to find trampoline by checking if hookedAddress points to a hooked function
-  // The hookedAddress might be the original address (now containing JMP) or cached pointer
-  for(auto &pair : s_Trampolines)
-  {
-    void *originalAddr = pair.first;
-    void *trampolineAddr = pair.second;
-    
-    RDCLOG("[EAT_HOOK]   Checking: original=0x%p, trampoline=0x%p", originalAddr, trampolineAddr);
-    
-    // Check if hookedAddress matches the original address
-    if(originalAddr == hookedAddress)
-    {
-      RDCLOG("[EAT_HOOK]   ✓ Found trampoline by original address: 0x%p", trampolineAddr);
-      return trampolineAddr;
-    }
-  }
-  
-  RDCLOG("[EAT_HOOK]   ✗ No trampoline found, returning original address");
-  // Not found - return the address as-is (might not be hooked by EAT)
-  return hookedAddress;
-}
 
 // Simple x64 instruction length decoder to find instruction boundaries
 // This ensures we don't truncate instructions when copying to trampoline
@@ -1696,10 +1537,8 @@ static bool HookExportFunction(HMODULE module, const char *functionName, void *h
       RDCLOG("[EAT_HOOK] Export table RVA modification disabled for %s (hook=0x%p), using inline hook only", 
              functionName, hookFunc);
 
-      // Store mappings
+      // Store trampoline mapping
       s_Trampolines[originalFunc] = trampoline;
-      s_EATHooks[originalFunc] = hookFunc;
-      s_EATOriginals[hookFunc] = trampoline;  // Hook should call trampoline, not original
       
       if(outOriginal)
         *outOriginal = trampoline;  // Return trampoline address
@@ -1803,7 +1642,6 @@ static void ApplyExportTableHooks()
   if(dxgi)
   {
     RDCLOG("[EAT_HOOK] Found dxgi.dll at 0x%p", dxgi);
-    RDCLOG("[HOOK_DIAG] dxgi.dll was already loaded when hook installation started - applying EAT hooks to ensure CreateDXGIFactory is intercepted");
     
     // Apply EAT hooks for dxgi.dll exports to catch direct calls that bypass IAT
     for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)

@@ -236,11 +236,6 @@ private:
       __out_opt IDXGISwapChain **ppSwapChain, __out_opt ID3D11Device **ppDevice,
       __out_opt D3D_FEATURE_LEVEL *pFeatureLevel, __out_opt ID3D11DeviceContext **ppImmediateContext)
   {
-    static int callCount = 0;
-    callCount++;
-    RDCLOG("[HOOK_DIAG] D3D11CreateDeviceAndSwapChain_hook called (call #%d)! DriverType=%d, Flags=0x%x, FeatureLevels=%d, pAdapter=0x%p",
-           callCount, DriverType, Flags, FeatureLevels, pAdapter);
-    
     PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN createFunc = d3d11hooks.CreateDeviceAndSwapChain();
 
     if(createFunc == NULL)
