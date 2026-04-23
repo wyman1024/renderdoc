@@ -621,6 +621,14 @@ DECLARE_REFLECTION_STRUCT(BugReport);
   CONFIG_SETTING_VAL(public, bool, bool, AllowProcessInject, false)                                \
                                                                                                    \
   DOCUMENT(                                                                                        \
+      "The executable name to look for when using the auto-inject UI action.\n"                   \
+      "\n"                                                                                         \
+      "Defaults to ``HTGame.exe``."                                                                \
+      ""                                                                                           \
+      ":type: str");                                                                               \
+  CONFIG_SETTING_VAL(public, QString, rdcstr, AutoInjectTargetProcessName, "HTGame.exe")          \
+                                                                                                   \
+  DOCUMENT(                                                                                        \
       "A list of :class:`ShaderProcessingTool` detailing shader processing programs. The list "    \
       "comes in priority order, with earlier processors preferred over later ones.\n"              \
       "\n"                                                                                         \

@@ -38,6 +38,7 @@
 #include <QToolButton>
 #include <QToolTip>
 #include "Code/QRDUtils.h"
+#include "Code/qprocessinfo.h"
 #include "Code/Resources.h"
 #include "Widgets/Extended/RDLabel.h"
 #include "Widgets/Extended/RDMenu.h"
@@ -118,11 +119,15 @@ MainWindow::MainWindow(ICaptureContext &ctx) : QMainWindow(NULL), ui(new Ui::Mai
 #if defined(Q_OS_WIN32)
   // remove inject menu item when it's not enabled in the settings
   if(!ctx.Config().AllowProcessInject)
+  {
     ui->menu_File->removeAction(ui->action_Inject_into_Process);
+    ui->menu_File->removeAction(ui->action_Auto_Inject_HTGame);
+  }
 #else
   // process injection is not supported on non-Windows, so remove the menu item rather than disable
   // it without a clear way to communicate that it is never supported
   ui->menu_File->removeAction(ui->action_Inject_into_Process);
+  ui->menu_File->removeAction(ui->action_Auto_Inject_HTGame);
 #endif
 
   QToolTip::setPalette(palette());
@@ -228,6 +233,11 @@ MainWindow::MainWindow(ICaptureContext &ctx) : QMainWindow(NULL), ui(new Ui::Mai
   m_MessageTick.setSingleShot(false);
   m_MessageTick.setInterval(175);
   m_MessageTick.start();
+
+  QObject::connect(&m_AutoInjectTimer, &QTimer::timeout, this, &MainWindow::checkAndInjectProcess);
+  m_AutoInjectTimer.setSingleShot(false);
+  m_AutoInjectTimer.setInterval(1);  // Check every 1ms for earliest possible hook timing
+  updateAutoInjectTargetProcess();
 
   QTimer *vkconfigCheckTimer = new QTimer(this);
   QObject::connect(vkconfigCheckTimer, &QTimer::timeout, [vkconfigCheckTimer]() {
@@ -2554,6 +2564,157 @@ void MainWindow::on_action_Inject_into_Process_triggered()
     ui->toolWindowManager->addToolWindow(capDialog->Widget(), mainToolArea());
 }
 
+void MainWindow::on_action_Auto_Inject_HTGame_triggered()
+{
+  updateAutoInjectTargetProcess();
+  m_AutoInjectActive = ui->action_Auto_Inject_HTGame->isChecked();
+
+  if(m_AutoInjectActive)
+  {
+    m_AttemptedPIDs.clear();
+    m_AutoInjectTimer.start();
+    qDebug() << "Auto-inject started for" << m_TargetProcessName;
+  }
+  else
+  {
+    m_AutoInjectTimer.stop();
+    m_AttemptedPIDs.clear();
+    qDebug() << "Auto-inject stopped";
+  }
+}
+
+void MainWindow::checkAndInjectProcess()
+{
+  if(!m_AutoInjectActive)
+  {
+    m_AutoInjectTimer.stop();
+    return;
+  }
+
+  QProcessList processes = QProcessInfo::enumerate(false);
+
+  for(const QProcessInfo &process : processes)
+  {
+    if(process.name().compare(m_TargetProcessName, Qt::CaseInsensitive) == 0)
+    {
+      uint32_t pid = process.pid();
+
+      // Skip if we've already attempted to inject into this PID recently
+      // Allow retry after 100ms (100 * 1ms intervals)
+      if(m_AttemptedPIDs.contains(pid))
+      {
+        // Check if enough time has passed to retry
+        static QMap<uint32_t, int> retryCounters;
+        if(!retryCounters.contains(pid))
+          retryCounters[pid] = 0;
+        
+        retryCounters[pid]++;
+        if(retryCounters[pid] < 100)  // Wait 100ms before retry (100 * 1ms)
+        {
+          continue;
+        }
+        
+        // Enough time passed, allow retry
+        retryCounters.remove(pid);
+        m_AttemptedPIDs.remove(pid);
+        qDebug() << "Retrying injection into" << m_TargetProcessName << "(PID" << pid << ")";
+      }
+
+      // Mark this PID as attempted
+      m_AttemptedPIDs.insert(pid);
+
+      // Try to inject
+      qDebug() << "Attempting to inject into" << m_TargetProcessName << "(PID" << pid << ")";
+
+      rdcarray<EnvironmentModification> env;
+      ICaptureDialog *capDialog = m_Ctx.GetCaptureDialog();
+      CaptureOptions opts = capDialog->Settings().options;
+      QString name = m_TargetProcessName;
+
+      // Use a flag to track if injection is in progress for this PID
+      // Use a helper function to get the static set to avoid variable name conflicts
+      auto getInjectingPIDs = []() -> QSet<uint32_t>& {
+        static QSet<uint32_t> s_injectingPIDs;
+        return s_injectingPIDs;
+      };
+      
+      if(getInjectingPIDs().contains(pid))
+        continue;
+      getInjectingPIDs().insert(pid);
+
+      // Create a custom injection function that doesn't show error dialogs
+      LambdaThread *th = new LambdaThread([this, pid, env, name, opts]() {
+        QString capturefile = m_Ctx.TempCaptureFilename(name);
+
+        ExecuteResult ret = RENDERDOC_InjectIntoProcess(pid, env, capturefile, opts, false);
+
+        GUIInvoke::call(this, [this, pid, ret]() {
+          // Remove from injecting set
+          auto getInjectingPIDs = []() -> QSet<uint32_t>& {
+            static QSet<uint32_t> s_injectingPIDs;
+            return s_injectingPIDs;
+          };
+          getInjectingPIDs().remove(pid);
+          
+          if(ret.result.code != ResultCode::Succeeded)
+          {
+            // Injection failed, log but don't show dialog
+            rdcstr errorMsg = ret.result.Message();
+            qDebug() << "Failed to inject into" << m_TargetProcessName << "(PID" << pid
+                     << "):" << ToQStr(errorMsg);
+            // Don't remove from m_AttemptedPIDs, allow retry after delay
+            return;
+          }
+
+          // Injection succeeded
+          LiveCapture *live = new LiveCapture(m_Ctx, QString(), QString(), ret.ident, this, this);
+          ShowLiveCapture(live);
+          
+          // Stop the timer
+          m_AutoInjectTimer.stop();
+          ui->action_Auto_Inject_HTGame->setChecked(false);
+          m_AutoInjectActive = false;
+          m_AttemptedPIDs.clear();
+          qDebug() << "Successfully injected into" << m_TargetProcessName << "(PID" << pid
+                   << "), stopping auto-inject";
+        });
+      });
+      th->start();
+      th->deleteLater();
+
+      // Remove from injecting set after a delay (in case callback is not called)
+      QTimer::singleShot(5000, [pid]() {
+        auto getInjectingPIDs = []() -> QSet<uint32_t>& {
+          static QSet<uint32_t> s_injectingPIDs;
+          return s_injectingPIDs;
+        };
+        getInjectingPIDs().remove(pid);
+      });
+
+      return;
+    }
+  }
+
+  // If no matching process found, clear old attempted PIDs periodically
+  // This allows retrying if the process restarts
+  static int clearCounter = 0;
+  if(++clearCounter >= 10000)  // Clear every 10 seconds (10000 * 1ms)
+  {
+    clearCounter = 0;
+    m_AttemptedPIDs.clear();
+  }
+}
+
+void MainWindow::updateAutoInjectTargetProcess()
+{
+  m_TargetProcessName = ToQStr(m_Ctx.Config().AutoInjectTargetProcessName).trimmed();
+
+  if(m_TargetProcessName.isEmpty())
+    m_TargetProcessName = lit("HTGame.exe");
+
+  ui->action_Auto_Inject_HTGame->setText(tr("Auto Inject %1").arg(m_TargetProcessName));
+}
+
 void MainWindow::on_action_Errors_and_Warnings_triggered()
 {
   QWidget *debugMessages = m_Ctx.GetDebugMessageView()->Widget();
@@ -2867,6 +3028,7 @@ void MainWindow::on_action_Settings_triggered()
 {
   SettingsDialog about(m_Ctx, this);
   RDDialog::show(&about);
+  updateAutoInjectTargetProcess();
 }
 
 void MainWindow::on_action_View_Documentation_triggered()

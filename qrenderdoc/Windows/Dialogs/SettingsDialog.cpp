@@ -300,6 +300,7 @@ SettingsDialog::SettingsDialog(ICaptureContext &ctx, QWidget *parent)
 
   ui->AllowGlobalHook->setChecked(m_Ctx.Config().AllowGlobalHook);
   ui->AllowProcessInject->setChecked(m_Ctx.Config().AllowProcessInject);
+  ui->AutoInjectTargetProcessName->setText(ToQStr(m_Ctx.Config().AutoInjectTargetProcessName));
 
   ui->EventBrowser_TimeUnit->setCurrentIndex((int)m_Ctx.Config().EventBrowser_TimeUnit);
   ui->EventBrowser_AddFake->setChecked(m_Ctx.Config().EventBrowser_AddFake);
@@ -328,6 +329,8 @@ SettingsDialog::SettingsDialog(ICaptureContext &ctx, QWidget *parent)
 #if !defined(Q_OS_WIN32)
   ui->injectProcLabel->setVisible(false);
   ui->AllowProcessInject->setVisible(false);
+  ui->autoInjectTargetLabel->setVisible(false);
+  ui->AutoInjectTargetProcessName->setVisible(false);
 #endif
 
   m_Init = false;
@@ -529,6 +532,12 @@ void SettingsDialog::on_AllowProcessInject_toggled(bool checked)
 
   if(m_Ctx.HasCaptureDialog())
     m_Ctx.GetCaptureDialog()->UpdateGlobalHook();
+}
+
+void SettingsDialog::on_AutoInjectTargetProcessName_textEdited(const QString &processName)
+{
+  m_Ctx.Config().AutoInjectTargetProcessName = processName.trimmed();
+  m_Ctx.Config().Save();
 }
 
 void SettingsDialog::on_CheckUpdate_AllowChecks_toggled(bool checked)

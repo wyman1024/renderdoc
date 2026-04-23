@@ -250,8 +250,31 @@ extern "C" __declspec(dllexport) void __cdecl INTERNAL_ApplyEnvMods(void *ignore
   Process::ApplyEnvironmentModification();
 }
 
+void _InjectDLL(HANDLE hProcess, rdcwstr libName, bool silentRetry, int retryCount);
+
+// Overload for backward compatibility
 void InjectDLL(HANDLE hProcess, rdcwstr libName)
 {
+  _InjectDLL(hProcess, libName, true, 0);
+}
+
+void _InjectDLL(HANDLE hProcess, rdcwstr libName, bool silentRetry, int retryCount)
+{
+  // Check if hProcess is valid
+  if(hProcess == NULL || hProcess == INVALID_HANDLE_VALUE)
+  {
+    RDCERR("Invalid process handle (NULL or INVALID_HANDLE_VALUE)");
+    return;
+  }
+
+  // Limit retry attempts to prevent infinite recursion
+  const int MAX_RETRY_COUNT = 100;
+  if(retryCount >= MAX_RETRY_COUNT)
+  {
+    RDCERR("MAX_RETRY_COUNT reached for InjectDLL");
+    return;
+  }
+
   wchar_t dllPath[MAX_PATH + 1] = {0};
   wcscpy_s(dllPath, libName.c_str());
 
@@ -259,7 +282,13 @@ void InjectDLL(HANDLE hProcess, rdcwstr libName)
 
   if(kernel32 == NULL)
   {
-    RDCERR("Couldn't get handle for kernel32.dll");
+    if(!silentRetry)
+      RDCERR("Couldn't get handle for kernel32.dll");
+    else
+    {
+      Threading::Sleep(100);
+      _InjectDLL(hProcess, libName, silentRetry, retryCount + 1);
+    }
     return;
   }
 
@@ -277,23 +306,48 @@ void InjectDLL(HANDLE hProcess, rdcwstr libName)
       {
         WaitForSingleObject(hThread, INFINITE);
         CloseHandle(hThread);
+        // Success, free memory and return
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        return;
       }
       else
       {
-        RDCERR("Couldn't create remote thread for LoadLibraryW: %u", GetLastError());
+        if(!silentRetry)
+          RDCERR("Couldn't create remote thread for LoadLibraryW: %u", GetLastError());
+        else
+        {
+          VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+          Threading::Sleep(100);
+          _InjectDLL(hProcess, libName, silentRetry, retryCount + 1);
+          return;
+        }
       }
     }
     else
     {
-      RDCERR("Couldn't write remote memory %p with dllPath '%ls': %u", remoteMem, dllPath,
-             GetLastError());
+      if(!silentRetry)
+        RDCERR("Couldn't write remote memory %p with dllPath '%ls': %u", remoteMem, dllPath,
+               GetLastError());
+      else
+      {
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        Threading::Sleep(100);
+        _InjectDLL(hProcess, libName, silentRetry, retryCount + 1);
+        return;
+      }
     }
 
     VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
   }
   else
   {
-    RDCERR("Couldn't allocate remote memory for DLL '%ls': %u", libName.c_str(), GetLastError());
+    if(!silentRetry)
+      RDCERR("Couldn't allocate remote memory for DLL '%ls': %u", libName.c_str(), GetLastError());
+    else
+    {
+      Threading::Sleep(100);
+      _InjectDLL(hProcess, libName, silentRetry, retryCount + 1);
+    }
   }
 }
 
@@ -325,7 +379,7 @@ uintptr_t FindRemoteDLL(DWORD pid, rdcstr libName)
 
   if(hModuleSnap == INVALID_HANDLE_VALUE)
   {
-    RDCERR("Couldn't create toolhelp dump of modules in process %u", pid);
+   // RDCERR("Couldn't create toolhelp dump of modules in process %u", pid);
     return 0;
   }
 
@@ -1009,7 +1063,6 @@ rdcpair<RDResult, uint32_t> Process::InjectIntoProcess(uint32_t pid,
 
   InjectDLL(hProcess, renderdocPath);
 
-  const char *rdoc_dll = STRINGIZE(RDOC_BASE_NAME);
 
   uintptr_t loc = FindRemoteDLL(pid, STRINGIZE(RDOC_BASE_NAME) ".dll");
 
@@ -1017,11 +1070,12 @@ rdcpair<RDResult, uint32_t> Process::InjectIntoProcess(uint32_t pid,
 
   if(loc == 0)
   {
-    SET_ERROR_RESULT(
-        result.first, ResultCode::InjectionFailed,
-        "Failed to inject %s.dll into process. Check that the process did not crash or exit "
-        "early in initialisation, e.g. if the working directory is incorrectly set.",
-        rdoc_dll);
+    //const char *rdoc_dll = STRINGIZE(RDOC_BASE_NAME);
+    //SET_ERROR_RESULT(
+    //    result.first, ResultCode::InjectionFailed,
+    //    "Failed to inject %s.dll into process. Check that the process did not crash or exit "
+    //    "early in initialisation, e.g. if the working directory is incorrectly set.",
+    //    rdoc_dll);
   }
   else
   {

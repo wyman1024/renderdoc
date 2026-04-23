@@ -28,6 +28,7 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QSemaphore>
+#include <QSet>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -166,6 +167,7 @@ private slots:
   void on_action_Timeline_triggered();
   void on_action_Python_Shell_triggered();
   void on_action_Inject_into_Process_triggered();
+  void on_action_Auto_Inject_HTGame_triggered();
   void on_action_Resolve_Symbols_triggered();
   void on_action_Recompress_Capture_triggered();
   void on_action_EmbedExternalFiles_triggered();
@@ -253,6 +255,7 @@ private:
   QAction *updateAction = NULL;
 
   QTimer m_MessageTick;
+  QTimer m_AutoInjectTimer;
   QSemaphore m_RemoteProbeSemaphore;
   QSemaphore m_RemoteInitialProbeReady;
   LambdaThread *m_RemoteProbe;
@@ -270,6 +273,9 @@ private:
   bool m_messageAlternate = false;
 
   bool m_OwnTempCapture = false;
+  bool m_AutoInjectActive = false;
+  QString m_TargetProcessName;
+  QSet<uint32_t> m_AttemptedPIDs;
 
   QString m_LastSaveCapturePath;
 
@@ -297,10 +303,13 @@ private:
   void LoadSaveLayout(QAction *action, bool save);
   bool LoadLayout(int layout);
   bool SaveLayout(int layout);
+  void updateAutoInjectTargetProcess();
 
   void FillRemotesMenu(QMenu *menu, bool includeLocalhost);
 
   void showLaunchError(ResultDetails result);
 
   bool isUnshareableDeviceInUse();
+
+  void checkAndInjectProcess();
 };
