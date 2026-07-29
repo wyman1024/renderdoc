@@ -1239,9 +1239,21 @@ void LibraryHooks::RemoveHooks()
 
 bool LibraryHooks::Detect(const char *identifier)
 {
+  return DetectAny(identifier, NULL);
+}
+
+bool LibraryHooks::DetectAny(const char *identifier, const char *altIdentifier)
+{
+  // NOTE: this walks the module list via CreateToolhelp32Snapshot, which needs the loader lock -
+  // and we are called from DllMain, which already holds it. That makes every extra call here a
+  // fresh opportunity to deadlock, so the two markers we look for are resolved in ONE walk rather
+  // than by calling Detect() twice. Doing it twice deadlocked MuMu's MuMuVMMHeadless.exe: a capture
+  // target never exports the first marker, so the second walk always ran.
   bool ret = false;
-  ForAllModules([&ret, identifier](const MODULEENTRY32 &me32) {
+  ForAllModules([&ret, identifier, altIdentifier](const MODULEENTRY32 &me32) {
     if(GetProcAddress(me32.hModule, identifier) != NULL)
+      ret = true;
+    else if(altIdentifier && GetProcAddress(me32.hModule, altIdentifier) != NULL)
       ret = true;
   });
   return ret;

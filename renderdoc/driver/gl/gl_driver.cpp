@@ -2183,6 +2183,10 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
     return;
   }
 
+  // A window-less Vulkan renderer may feed this OpenGL/GLES presenter. In that configuration GLES
+  // provides the frame boundary, but only the Vulkan work is useful to capture.
+  RenderDoc::Inst().AdvanceVulkanBridgeCapture(devWnd.device);
+
   // only allow capturing on 'modern' created contexts
   if(ctxdata.Legacy())
     return;
@@ -2191,12 +2195,18 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
   if(IsActiveCapturing(m_State) && !m_AppControlledCapture)
     RenderDoc::Inst().EndFrameCapture(devWnd);
 
-  if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && IsBackgroundCapturing(m_State))
+  if(IsBackgroundCapturing(m_State) && !RenderDoc::Inst().IsFrameCapturing() &&
+     RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter))
   {
-    RenderDoc::Inst().StartFrameCapture(devWnd);
+    // Allow two complete GLES presentations for the typical double-buffered offscreen hand-off.
+    // If no Vulkan target exists, preserve RenderDoc's normal OpenGL capture behaviour.
+    if(!RenderDoc::Inst().StartVulkanBridgeCapture(devWnd.device, 2))
+    {
+      RenderDoc::Inst().StartFrameCapture(devWnd);
 
-    m_AppControlledCapture = false;
-    m_CapturedFrames.back().frameNumber = m_FrameCounter;
+      m_AppControlledCapture = false;
+      m_CapturedFrames.back().frameNumber = m_FrameCounter;
+    }
   }
 }
 

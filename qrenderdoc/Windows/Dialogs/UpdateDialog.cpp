@@ -255,7 +255,7 @@ void UpdateDialog::on_update_clicked()
 
       bool success = true;
 
-      QString dll = lit("renderdoc.dll");
+      QString dll = lit("rendercap.dll");
       QString cmd = lit("renderdoccmd.exe");
 
       QFile::remove(dir.absoluteFilePath(dll));

@@ -5541,6 +5541,34 @@ RDResult Vulkan_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, IRep
   Process::RegisterEnvironmentModification(
       EnvironmentModification(EnvMod::Set, EnvSep::NoSep, RENDERDOC_VULKAN_LAYER_VAR, "0"));
 
+  // Our layer json has no enable_environment - it is loaded into every vulkan process so that we
+  // can capture targets launched by a service, which never inherit our environment. That means the
+  // enable var above no longer keeps the capture layer out of our own replay device, so exclude
+  // ourselves through the layer's disable variable instead.
+  //
+  // The variable must be live only while *we* create our instance, and must be gone again by the
+  // time we launch anything: a child process inherits our environment block wholesale, so leaving
+  // it set would propagate the disable all the way down the target's process tree (e.g. into MuMu's
+  // MuMuVMMHeadless.exe) and switch the capture layer off in exactly the process we want to
+  // capture. The loader only reads it inside vkCreateInstance, so scoping it to this function is
+  // enough - hence the guard, which clears it again on every return path below.
+  struct LayerDisableScope
+  {
+    LayerDisableScope() { set("1"); }
+    ~LayerDisableScope() { set(NULL); }
+    static void set(const char *value)
+    {
+#if ENABLED(RDOC_WIN32)
+      ::SetEnvironmentVariableA(RENDERDOC_VULKAN_LAYER_DISABLE_VAR, value);
+#else
+      if(value)
+        setenv(RENDERDOC_VULKAN_LAYER_DISABLE_VAR, value, 1);
+      else
+        unsetenv(RENDERDOC_VULKAN_LAYER_DISABLE_VAR);
+#endif
+    }
+  } layerDisableScope;
+
   // disable buggy and user-hostile NV optimus layer, which can completely delete physical devices
   // (not just rearrange them) and cause problems between capture and replay.
   Process::RegisterEnvironmentModification(

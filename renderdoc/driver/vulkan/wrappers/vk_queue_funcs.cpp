@@ -1461,6 +1461,17 @@ bool WrappedVulkan::Serialise_vkQueueSubmit(SerialiserType &ser, VkQueue queue, 
   return true;
 }
 
+static int64_t GetBridgeCommandBufferActivity(VkResourceRecord *record)
+{
+  int64_t activity = (int64_t)record->bakedCommands->NumChunks();
+
+  for(VkResourceRecord *subcmd : record->bakedCommands->cmdInfo->subcmds)
+    activity += (int64_t)subcmd->bakedCommands->NumChunks();
+
+  // An empty but submitted command buffer is still evidence that this Vulkan instance is active.
+  return activity > 0 ? activity : 1;
+}
+
 VkResult WrappedVulkan::vkQueueSubmit(VkQueue queue, uint32_t submitCount,
                                       const VkSubmitInfo *pSubmits, VkFence fence)
 {
@@ -1490,6 +1501,7 @@ VkResult WrappedVulkan::vkQueueSubmit(VkQueue queue, uint32_t submitCount,
   bool beginCapture = false;
   bool endCapture = false;
   rdcarray<VkCommandBuffer> commandBuffers;
+  int64_t bridgeActivity = 0;
 
   for(uint32_t s = 0; s < submitCount; s++)
   {
@@ -1501,8 +1513,12 @@ VkResult WrappedVulkan::vkQueueSubmit(VkQueue queue, uint32_t submitCount,
       endCapture |= record->bakedCommands->cmdInfo->endCapture;
 
       commandBuffers.push_back(pSubmits[s].pCommandBuffers[i]);
+      bridgeActivity += GetBridgeCommandBufferActivity(record);
     }
   }
+
+  if(bridgeActivity > 0)
+    Atomic::ExchAdd64(&m_BridgeActivity, bridgeActivity);
 
   if(beginCapture)
   {
@@ -1658,6 +1674,7 @@ VkResult WrappedVulkan::vkQueueSubmit2(VkQueue queue, uint32_t submitCount,
   bool beginCapture = false;
   bool endCapture = false;
   rdcarray<VkCommandBuffer> commandBuffers;
+  int64_t bridgeActivity = 0;
 
   for(uint32_t s = 0; s < submitCount; s++)
   {
@@ -1669,8 +1686,12 @@ VkResult WrappedVulkan::vkQueueSubmit2(VkQueue queue, uint32_t submitCount,
       endCapture |= record->bakedCommands->cmdInfo->endCapture;
 
       commandBuffers.push_back(pSubmits[s].pCommandBufferInfos[i].commandBuffer);
+      bridgeActivity += GetBridgeCommandBufferActivity(record);
     }
   }
+
+  if(bridgeActivity > 0)
+    Atomic::ExchAdd64(&m_BridgeActivity, bridgeActivity);
 
   if(beginCapture)
   {

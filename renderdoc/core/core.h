@@ -100,6 +100,10 @@ struct DeviceOwnedWindow
 struct IFrameCapturer
 {
   virtual RDCDriver GetFrameCaptureDriver() = 0;
+  // Monotonically increasing estimate of useful GPU work submitted by this capturer. Drivers that
+  // don't expose an activity estimate can leave the default value. This is used only to distinguish
+  // between multiple off-screen capture candidates.
+  virtual uint64_t GetFrameCaptureActivity() { return 0; }
   virtual void StartFrameCapture(DeviceOwnedWindow devWnd) = 0;
   virtual bool EndFrameCapture(DeviceOwnedWindow devWnd) = 0;
   virtual bool DiscardFrameCapture(DeviceOwnedWindow devWnd) = 0;
@@ -579,6 +583,12 @@ public:
   bool EndFrameCapture(DeviceOwnedWindow devWnd);
   bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
 
+  // Some applications render with a window-less Vulkan instance and use OpenGL/GLES or another
+  // Vulkan instance to present the resulting image. In that case the presenting API provides the
+  // frame boundary while the off-screen Vulkan capturer records the useful work.
+  bool StartVulkanBridgeCapture(void *presentingDevice, uint32_t presentationFrames);
+  bool AdvanceVulkanBridgeCapture(void *presentingDevice);
+
   bool MatchClosestWindow(DeviceOwnedWindow &devWnd);
 
   bool IsActiveWindow(DeviceOwnedWindow devWnd);
@@ -725,6 +735,27 @@ private:
   std::map<void *, IFrameCapturer *> m_DeviceFrameCapturers;
 
   IFrameCapturer *MatchFrameCapturer(DeviceOwnedWindow devWnd);
+
+  struct VulkanBridgeCandidate
+  {
+    void *device = NULL;
+    IFrameCapturer *capturer = NULL;
+    uint64_t activity = 0;
+    bool hasWindow = false;
+  };
+
+  void BeginVulkanBridgeCapture(const VulkanBridgeCandidate &target);
+  void ResetVulkanBridgeCapture();
+
+  Threading::CriticalSection m_VulkanBridgeLock;
+  bool m_VulkanBridgeCaptureActive = false;
+  bool m_VulkanBridgeSelectingTarget = false;
+  void *m_VulkanBridgePresentingDevice = NULL;
+  void *m_VulkanBridgeDevice = NULL;
+  IFrameCapturer *m_VulkanBridgeCapturer = NULL;
+  uint32_t m_VulkanBridgePresentsRemaining = 0;
+  uint32_t m_VulkanBridgeSelectionPresentsRemaining = 0;
+  rdcarray<VulkanBridgeCandidate> m_VulkanBridgeCandidates;
 
   bool m_VendorExts[arraydim<VendorExtensions>()] = {};
 

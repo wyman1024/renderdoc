@@ -362,6 +362,7 @@ private:
 
   bool m_MarkedActive = false;
   uint32_t m_SubmitCounter = 0;
+  int64_t m_BridgeActivity = 0;
 
   uint64_t threadSerialiserTLSSlot;
 
@@ -1189,6 +1190,10 @@ private:
   void ApplyRPLoadDiscards(VkCommandBuffer commandBuffer, VkRect2D renderArea);
 
   RDCDriver GetFrameCaptureDriver() { return RDCDriver::Vulkan; }
+  uint64_t GetFrameCaptureActivity()
+  {
+    return (uint64_t)Atomic::ExchAdd64(&m_BridgeActivity, 0);
+  }
   void StartFrameCapture(DeviceOwnedWindow devWnd);
   bool EndFrameCapture(DeviceOwnedWindow devWnd);
   bool DiscardFrameCapture(DeviceOwnedWindow devWnd);

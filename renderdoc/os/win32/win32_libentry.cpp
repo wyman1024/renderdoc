@@ -49,8 +49,20 @@ static BOOL add_hooks()
     return TRUE;
   }
 
-  // search for an exported symbol with this name, typically renderdoc__replay__marker
-  if(LibraryHooks::Detect(STRINGIZE(RDOC_BASE_NAME) "__replay__marker"))
+  // Search for an exported symbol with this name, typically rendercap__replay__marker.
+  //
+  // We deliberately also accept upstream RenderDoc's marker. Our vulkan layer json declares no
+  // enable_environment, so the loader pulls this dll into *every* vulkan process on the machine -
+  // including the replay/UI process of any other RenderDoc-derived debugger the user happens to
+  // have installed. Those export renderdoc__replay__marker instead of ours, so if we only looked
+  // for our own name we would mistake them for a capture target, wrap their replay device and
+  // crash them. Recognising the upstream marker as well makes us stand down for the whole
+  // RenderDoc family rather than only for our own build.
+  // Both markers are resolved in a single pass - see DetectAny(). Calling Detect() twice walks the
+  // module list twice while DllMain holds the loader lock, which deadlocked capture targets (they
+  // never export the first marker, so the second walk always ran).
+  if(LibraryHooks::DetectAny(STRINGIZE(RDOC_BASE_NAME) "__replay__marker",
+                             "renderdoc__replay__marker"))
   {
     RDCDEBUG("Not creating hooks - in replay app");
 

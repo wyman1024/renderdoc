@@ -3340,15 +3340,25 @@ void WrappedVulkan::Present(DeviceOwnedWindow devWnd)
     return;
   }
 
+  // A separate window-less Vulkan instance may contain the real scene rendering while this
+  // instance only presents a shared image. Let this present advance that off-screen capture.
+  bool bridgePresent = RenderDoc::Inst().AdvanceVulkanBridgeCapture(devWnd.device);
+
   if(IsActiveCapturing(m_State) && !m_AppControlledCapture)
     RenderDoc::Inst().EndFrameCapture(devWnd);
 
-  if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && IsBackgroundCapturing(m_State))
+  if(!bridgePresent && !RenderDoc::Inst().IsFrameCapturing() && IsBackgroundCapturing(m_State) &&
+     RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter))
   {
-    RenderDoc::Inst().StartFrameCapture(devWnd);
+    // Use this Vulkan instance only as a frame-boundary source if another active off-screen Vulkan
+    // capturer exists. If not, retain RenderDoc's normal presented-instance capture behaviour.
+    if(!RenderDoc::Inst().StartVulkanBridgeCapture(devWnd.device, 2))
+    {
+      RenderDoc::Inst().StartFrameCapture(devWnd);
 
-    m_AppControlledCapture = false;
-    m_CapturedFrames.back().frameNumber = m_FrameCounter;
+      m_AppControlledCapture = false;
+      m_CapturedFrames.back().frameNumber = m_FrameCounter;
+    }
   }
 }
 

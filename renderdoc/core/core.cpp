@@ -987,6 +987,235 @@ bool RenderDoc::DiscardFrameCapture(DeviceOwnedWindow devWnd)
   return false;
 }
 
+void RenderDoc::BeginVulkanBridgeCapture(const VulkanBridgeCandidate &target)
+{
+  m_VulkanBridgeSelectingTarget = false;
+  m_VulkanBridgeDevice = target.device;
+  m_VulkanBridgeCapturer = target.capturer;
+  m_VulkanBridgeCandidates.clear();
+  m_VulkanBridgeSelectionPresentsRemaining = 0;
+
+  RDCLOG(
+      "Starting Vulkan bridge capture on device %#p with capturer %#p; ending after %u presenting "
+      "frame boundary/boundaries",
+      target.device, target.capturer, m_VulkanBridgePresentsRemaining);
+
+  m_CaptureTitle.clear();
+  target.capturer->StartFrameCapture(DeviceOwnedWindow(target.device, NULL));
+  m_CapturesActive++;
+}
+
+void RenderDoc::ResetVulkanBridgeCapture()
+{
+  m_VulkanBridgeCaptureActive = false;
+  m_VulkanBridgeSelectingTarget = false;
+  m_VulkanBridgePresentingDevice = NULL;
+  m_VulkanBridgeDevice = NULL;
+  m_VulkanBridgeCapturer = NULL;
+  m_VulkanBridgePresentsRemaining = 0;
+  m_VulkanBridgeSelectionPresentsRemaining = 0;
+  m_VulkanBridgeCandidates.clear();
+}
+
+bool RenderDoc::StartVulkanBridgeCapture(void *presentingDevice, uint32_t presentationFrames)
+{
+  SCOPED_LOCK(m_VulkanBridgeLock);
+
+  if(m_VulkanBridgeCaptureActive)
+  {
+    RDCWARN("A Vulkan bridge capture is already active");
+    return true;
+  }
+
+  rdcarray<VulkanBridgeCandidate> vulkanCapturers;
+  rdcarray<VulkanBridgeCandidate> windowlessVulkanCapturers;
+
+  {
+    SCOPED_LOCK(m_CapturerListLock);
+
+    IFrameCapturer *presentingCapturer = NULL;
+    auto presentingIt = m_DeviceFrameCapturers.find(presentingDevice);
+    if(presentingIt != m_DeviceFrameCapturers.end())
+      presentingCapturer = presentingIt->second;
+
+    for(const auto &deviceCap : m_DeviceFrameCapturers)
+    {
+      if(deviceCap.second->GetFrameCaptureDriver() != RDCDriver::Vulkan)
+        continue;
+
+      // A Vulkan presenter must never select itself as the bridge target. Compare both the device
+      // key and capturer pointer since a capturer can be registered by more than one key.
+      if(deviceCap.first == presentingDevice ||
+         (presentingCapturer != NULL && deviceCap.second == presentingCapturer))
+        continue;
+
+      bool duplicate = false;
+      for(const VulkanBridgeCandidate &candidate : vulkanCapturers)
+      {
+        if(candidate.capturer == deviceCap.second)
+        {
+          duplicate = true;
+          break;
+        }
+      }
+
+      if(duplicate)
+        continue;
+
+      bool hasWindow = false;
+      for(const auto &windowCap : m_WindowFrameCapturers)
+      {
+        if(windowCap.second.FrameCapturer == deviceCap.second)
+        {
+          hasWindow = true;
+          break;
+        }
+      }
+
+      VulkanBridgeCandidate candidate;
+      candidate.device = deviceCap.first;
+      candidate.capturer = deviceCap.second;
+      candidate.activity = deviceCap.second->GetFrameCaptureActivity();
+      candidate.hasWindow = hasWindow;
+      vulkanCapturers.push_back(candidate);
+
+      if(!hasWindow)
+        windowlessVulkanCapturers.push_back(candidate);
+    }
+  }
+
+  if(vulkanCapturers.empty())
+  {
+    RDCDEBUG("No non-presenting Vulkan frame capturer is available for a bridge capture");
+    return false;
+  }
+
+  // Prefer genuinely off-screen instances. Some applications register hidden helper windows,
+  // however, so if none are window-less use the non-presenting Vulkan instances as candidates.
+  rdcarray<VulkanBridgeCandidate> &candidates =
+      windowlessVulkanCapturers.empty() ? vulkanCapturers : windowlessVulkanCapturers;
+
+  if(windowlessVulkanCapturers.empty())
+  {
+    RDCWARN(
+        "No window-less Vulkan bridge target was found; considering %zu non-presenting Vulkan "
+        "capturer(s)",
+        candidates.size());
+  }
+
+  m_VulkanBridgeCaptureActive = true;
+  m_VulkanBridgePresentingDevice = presentingDevice;
+  m_VulkanBridgePresentsRemaining = RDCMAX(1U, presentationFrames);
+
+  if(candidates.size() == 1)
+  {
+    BeginVulkanBridgeCapture(candidates[0]);
+    return true;
+  }
+
+  // Multiple Vulkan instances are common in emulators. Observe their submitted command activity
+  // over a presentation interval and select the busiest one instead of capturing an arbitrary
+  // helper instance.
+  m_VulkanBridgeSelectingTarget = true;
+  m_VulkanBridgeSelectionPresentsRemaining = 3;
+  m_VulkanBridgeCandidates = candidates;
+
+  RDCLOG(
+      "Selecting a Vulkan bridge target from %zu candidate(s) using submitted command activity",
+      m_VulkanBridgeCandidates.size());
+
+  for(const VulkanBridgeCandidate &candidate : m_VulkanBridgeCandidates)
+  {
+    RDCLOG(
+        "Vulkan bridge candidate: device %#p, capturer %#p, registered window: %s, activity "
+        "baseline: %llu",
+        candidate.device, candidate.capturer, candidate.hasWindow ? "yes" : "no",
+        (unsigned long long)candidate.activity);
+  }
+
+  return true;
+}
+
+bool RenderDoc::AdvanceVulkanBridgeCapture(void *presentingDevice)
+{
+  SCOPED_LOCK(m_VulkanBridgeLock);
+
+  if(!m_VulkanBridgeCaptureActive || presentingDevice != m_VulkanBridgePresentingDevice)
+    return false;
+
+  if(m_VulkanBridgeSelectingTarget)
+  {
+    VulkanBridgeCandidate *best = NULL;
+    uint64_t bestDelta = 0;
+    bool bestTied = false;
+
+    for(VulkanBridgeCandidate &candidate : m_VulkanBridgeCandidates)
+    {
+      const uint64_t activity = candidate.capturer->GetFrameCaptureActivity();
+      const uint64_t delta = activity - candidate.activity;
+
+      RDCLOG("Vulkan bridge candidate activity: device %#p, capturer %#p, delta %llu",
+             candidate.device, candidate.capturer, (unsigned long long)delta);
+
+      if(delta > bestDelta)
+      {
+        best = &candidate;
+        bestDelta = delta;
+        bestTied = false;
+      }
+      else if(delta > 0 && delta == bestDelta)
+      {
+        bestTied = true;
+      }
+    }
+
+    if(best != NULL && !bestTied)
+    {
+      VulkanBridgeCandidate target = *best;
+      RDCLOG("Selected Vulkan bridge target device %#p with activity delta %llu", target.device,
+             (unsigned long long)bestDelta);
+      BeginVulkanBridgeCapture(target);
+      return true;
+    }
+
+    if(m_VulkanBridgeSelectionPresentsRemaining > 1)
+    {
+      m_VulkanBridgeSelectionPresentsRemaining--;
+      RDCWARN(
+          "No unique active Vulkan bridge target yet; observing %u more presenting frame "
+          "boundary/boundaries",
+          m_VulkanBridgeSelectionPresentsRemaining);
+      return true;
+    }
+
+    RDCERR("Failed to select a unique active Vulkan bridge target");
+    ResetVulkanBridgeCapture();
+    return true;
+  }
+
+  if(m_VulkanBridgePresentsRemaining > 1)
+  {
+    m_VulkanBridgePresentsRemaining--;
+    RDCDEBUG("Vulkan bridge capture has %u presenting frame boundary/boundaries remaining",
+             m_VulkanBridgePresentsRemaining);
+    return true;
+  }
+
+  RDCLOG("Ending Vulkan bridge capture on device %#p", m_VulkanBridgeDevice);
+
+  bool ret =
+      m_VulkanBridgeCapturer->EndFrameCapture(DeviceOwnedWindow(m_VulkanBridgeDevice, NULL));
+
+  if(m_CapturesActive > 0)
+    m_CapturesActive--;
+
+  if(!ret)
+    RDCERR("Failed to end Vulkan bridge capture on device %#p", m_VulkanBridgeDevice);
+
+  ResetVulkanBridgeCapture();
+  return true;
+}
+
 bool RenderDoc::IsTargetControlConnected()
 {
   SCOPED_LOCK(m_SingleClientLock);
@@ -2145,6 +2374,39 @@ void RenderDoc::RemoveDeviceFrameCapturer(void *dev)
   {
     RDCERR("Invalid device pointer: %#p", dev);
     return;
+  }
+
+  {
+    SCOPED_LOCK(m_VulkanBridgeLock);
+
+    bool bridgeParticipant =
+        m_VulkanBridgeCaptureActive &&
+        (m_VulkanBridgePresentingDevice == dev || m_VulkanBridgeDevice == dev);
+
+    if(m_VulkanBridgeCaptureActive && m_VulkanBridgeSelectingTarget)
+    {
+      for(const VulkanBridgeCandidate &candidate : m_VulkanBridgeCandidates)
+        bridgeParticipant |= candidate.device == dev;
+    }
+
+    if(bridgeParticipant)
+    {
+      RDCWARN("Vulkan bridge participant %#p was destroyed before the capture completed", dev);
+
+      if(!m_VulkanBridgeSelectingTarget && m_VulkanBridgeCapturer != NULL)
+      {
+        // If the presenting device disappears, explicitly discard the still-live target capture.
+        // The target being removed cannot safely be called here and will clean up its own state.
+        if(m_VulkanBridgeDevice != dev)
+          m_VulkanBridgeCapturer->DiscardFrameCapture(
+              DeviceOwnedWindow(m_VulkanBridgeDevice, NULL));
+
+        if(m_CapturesActive > 0)
+          m_CapturesActive--;
+      }
+
+      ResetVulkanBridgeCapture();
+    }
   }
 
   RDCLOG("Removing device frame capturer for %#p", dev);

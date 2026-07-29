@@ -1,7 +1,7 @@
 {
   "file_format_version" : "1.1.2",
   "layer" : {
-    "name": "VK_LAYER_RENDERDOC_Capture",
+    "name": "VK_LAYER_RENDERDOC_RenderCap_Capture",
     "type": "GLOBAL",
     "library_path": "@VULKAN_LAYER_MODULE_PATH@",
     "api_version": "1.4.324",
@@ -38,11 +38,8 @@
         "entrypoints": ["vkGetPhysicalDeviceToolPropertiesEXT"]
       }
     ],
-    "enable_environment": {
-      "@VULKAN_ENABLE_VAR@": "1"
-    },
     "disable_environment": {
-      "DISABLE_VULKAN_RENDERDOC_CAPTURE_@RENDERDOC_VERSION_MAJOR@_@RENDERDOC_VERSION_MINOR@": "1"
+      "DISABLE_VULKAN_RENDERCAP_CAPTURE": "1"
     }
   }
 }

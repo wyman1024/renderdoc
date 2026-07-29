@@ -177,6 +177,20 @@ public:
   // replay-type programs.
   static bool Detect(const char *identifier);
 
+  // as Detect(), but looks for either of two identifiers. On windows this resolves both in a single
+  // pass over the module list: callers run from DllMain while the loader lock is held, and the
+  // module walk needs that same lock, so walking twice is a deadlock risk. Use this rather than
+  // calling Detect() more than once.
+  static bool DetectAny(const char *identifier, const char *altIdentifier)
+#if ENABLED(RDOC_WIN32)
+      ;
+#else
+  {
+    // posix implementations resolve through dlsym, which takes no loader lock of ours
+    return Detect(identifier) || (altIdentifier && Detect(altIdentifier));
+  }
+#endif
+
 private:
   static void BeginHookRegistration();
   static void EndHookRegistration();

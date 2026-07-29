@@ -150,8 +150,32 @@ enum
   RenderDoc_ForwardPortStride = 10,
 };
 
-#define RENDERDOC_VULKAN_LAYER_NAME "VK_LAYER_RENDERDOC_Capture"
-#define RENDERDOC_VULKAN_LAYER_VAR "ENABLE_VULKAN_RENDERDOC_CAPTURE"
+// The layer name must satisfy two conflicting constraints:
+//
+//  1. It must contain "renderdoc". MuMu launches MuMuVMMHeadless.exe with
+//     VK_LOADER_LAYERS_DISABLE=~implicit~ and VK_LOADER_LAYERS_ALLOW=*renderdoc*, so any layer whose
+//     name does not contain that substring is filtered out by the loader. The match is a
+//     case-insensitive substring test, so it does not have to be the exact upstream name.
+//
+//  2. It must NOT be exactly "VK_LAYER_RENDERDOC_Capture", which is what upstream RenderDoc uses.
+//     The loader silently discards a layer whose name duplicates one it already loaded ("because it
+//     is a duplicate of ..."), keeping whichever it found first. On any machine that also has
+//     RenderDoc - or another rebranded fork - installed, sharing the name means one of the two is
+//     dropped at random and capture mysteriously stops working.
+//
+// Keep this in sync with the "name" field in driver/vulkan/renderdoc.json.
+#define RENDERDOC_VULKAN_LAYER_NAME "VK_LAYER_RENDERDOC_RenderCap_Capture"
+#define RENDERDOC_VULKAN_LAYER_VAR "ENABLE_VULKAN_RENDERCAP_CAPTURE"
+
+// The layer json deliberately declares no "enable_environment", so the implicit layer loads into
+// every Vulkan process without the user having to set a machine-wide variable and reboot. That is
+// required to capture processes we cannot launch ourselves - e.g. MuMu's MuMuVMMHeadless.exe, which
+// is started by a service and therefore never inherits our environment.
+//
+// Because of that the replay app must exclude itself explicitly, otherwise the capture layer is
+// loaded into our own replay device and asserts. Vulkan_CreateReplayDevice sets this variable on
+// itself before creating its instance; the loader then skips the layer for that process only.
+#define RENDERDOC_VULKAN_LAYER_DISABLE_VAR "DISABLE_VULKAN_RENDERCAP_CAPTURE"
 
 #define RENDERDOC_ANDROID_LIBRARY "libVkLayer_GLES_RenderDoc.so"
 

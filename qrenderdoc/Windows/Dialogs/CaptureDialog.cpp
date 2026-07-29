@@ -516,8 +516,8 @@ void CaptureDialog::vulkanLayerWarn_mouseClick()
             RDDialog::critical(
                 this, tr("Can't locate renderdoccmd"),
                 tr("On linux we must run renderdoccmd as root to register the layer, because "
-                   "graphical applications like qrenderdoc may fail to launch.\n\n"
-                   "renderdoccmd could not be located either next to this qrenderdoc executable or "
+                   "graphical applications like qrendercap may fail to launch.\n\n"
+                   "renderdoccmd could not be located either next to this qrendercap executable or "
                    "in PATH."));
             return;
           }

@@ -633,6 +633,7 @@ add_library(renderdoc SHARED ${renderdoc_objects})
 target_compile_definitions(renderdoc ${RDOC_DEFINITIONS})
 target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
+set_target_properties(renderdoc PROPERTIES OUTPUT_NAME "${RDOC_BASE_NAME}")
 
 add_dependencies(renderdoc renderdoc_libentry)
 
@@ -644,7 +645,7 @@ if(UNIX AND NOT ANDROID AND NOT APPLE)
     endif()
 
     if(NOT RELEASE_MODE)
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/librenderdoc.so-gdb.py ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/librenderdoc.so-gdb.py)
+        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/librenderdoc.so-gdb.py ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib${RDOC_BASE_NAME}.so-gdb.py)
     endif()
 
     set_target_properties(renderdoc PROPERTIES LINK_FLAGS "${RDOC_LINK_FLAGS}")

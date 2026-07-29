@@ -636,6 +636,20 @@ VK_LAYER_RENDERDOC_CaptureNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerI
   if(pVersionStruct->sType != LAYER_NEGOTIATE_INTERFACE_STRUCT)
     return VK_ERROR_INITIALIZATION_FAILED;
 
+  // Our layer json declares no enable_environment, so the loader pulls this dll into *every* vulkan
+  // process on the machine. That includes replay/analysis processes - our own, and those of any
+  // other RenderDoc-derived debugger the user has installed - which must never have the capture
+  // layer inserted into their device or they assert and die.
+  //
+  // Refusing to negotiate is the robust way to stand down: the loader drops the layer entirely for
+  // this process. Unlike gating on an environment variable it needs no correct scoping or timing,
+  // it cannot leak into child processes, and it protects other people's replay apps too, since
+  // libentry recognises the upstream replay marker in addition to our own.
+  //
+  // This runs after DllMain, so the marker detection that sets IsReplayApp has already happened.
+  if(RenderDoc::Inst().IsReplayApp())
+    return VK_ERROR_INITIALIZATION_FAILED;
+
   if(pVersionStruct->loaderLayerInterfaceVersion >= 2)
   {
     pVersionStruct->pfnGetInstanceProcAddr = VK_LAYER_RENDERDOC_CaptureGetInstanceProcAddr;
